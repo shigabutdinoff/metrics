@@ -4,7 +4,7 @@ import (
 	"net/http"
 
 	"github.com/Shigabutdinoff/metrics/internal/handlers/request"
-	models "github.com/Shigabutdinoff/metrics/internal/model"
+	"github.com/Shigabutdinoff/metrics/internal/model/metrics"
 	"github.com/Shigabutdinoff/metrics/internal/storage"
 )
 
@@ -18,10 +18,10 @@ func Update(st storage.Storage) http.HandlerFunc {
 		}
 
 		switch upd.MType {
-		case models.Gauge:
-			st.SetGauge(upd.ID, *upd.Value)
-		case models.Counter:
-			st.AddCounter(upd.ID, *upd.Delta)
+		case metrics.Gauge:
+			st.SetGauge(upd.ID, upd.Value)
+		case metrics.Counter:
+			st.AddCounter(upd.ID, upd.Delta)
 		default:
 			http.Error(res, "invalid metric type", http.StatusBadRequest)
 			return

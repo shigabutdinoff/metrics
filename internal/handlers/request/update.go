@@ -6,17 +6,17 @@ import (
 	"strconv"
 	"strings"
 
-	models "github.com/Shigabutdinoff/metrics/internal/model"
+	"github.com/Shigabutdinoff/metrics/internal/model/metrics"
 )
 
 type Update struct {
 	*http.Request
-	models.Metrics
+	metrics.Metrics
 }
 
 func (u *Update) Validate() (int, error) {
 	u.ID = u.PathValue("name")
-	u.MType = u.PathValue("type")
+	u.MType = metrics.Type(u.PathValue("type"))
 	value := u.PathValue("value")
 
 	if strings.TrimSpace(u.ID) == "" {
@@ -24,13 +24,13 @@ func (u *Update) Validate() (int, error) {
 	}
 
 	switch u.MType {
-	case models.Counter:
+	case metrics.Counter:
 		v, err := strconv.ParseInt(value, 10, 64)
 		if err != nil {
 			return http.StatusBadRequest, fmt.Errorf("value must be an int64: %w", err)
 		}
 		u.Delta = &v
-	case models.Gauge:
+	case metrics.Gauge:
 		v, err := strconv.ParseFloat(value, 64)
 		if err != nil {
 			return http.StatusBadRequest, fmt.Errorf("value must be an float64: %w", err)
