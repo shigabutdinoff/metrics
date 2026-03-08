@@ -3,10 +3,12 @@ package request
 import (
 	"fmt"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 
 	"github.com/Shigabutdinoff/metrics/internal/model/metrics"
+	"github.com/go-chi/chi/v5"
 )
 
 type Update struct {
@@ -15,13 +17,14 @@ type Update struct {
 }
 
 func (u *Update) Validate() (int, error) {
-	u.ID = u.PathValue("name")
-	u.MType = metrics.Type(u.PathValue("type"))
-	value := u.PathValue("value")
-
-	if strings.TrimSpace(u.ID) == "" {
-		return http.StatusNotFound, fmt.Errorf("name is required")
+	rawName := chi.URLParam(u.Request, "name")
+	name, err := url.PathUnescape(rawName)
+	if err != nil || strings.TrimSpace(name) == "" {
+		return http.StatusNotFound, fmt.Errorf("invalid metric name: %w", err)
 	}
+	u.ID = name
+	u.MType = metrics.Type(chi.URLParam(u.Request, "type"))
+	value := chi.URLParam(u.Request, "value")
 
 	switch u.MType {
 	case metrics.Counter:

@@ -8,6 +8,7 @@ import (
 
 	"github.com/Shigabutdinoff/metrics/internal/model/metrics"
 	"github.com/Shigabutdinoff/metrics/internal/storage"
+	"github.com/go-resty/resty/v2"
 )
 
 func TestAgent_CollectMetrics(t *testing.T) {
@@ -55,7 +56,7 @@ func TestAgent_ReportMetrics(t *testing.T) {
 
 	a := &Agent{
 		Storage:       st,
-		Client:        ts.Client(),
+		Client:        resty.NewWithClient(ts.Client()),
 		ServerAddress: ts.URL,
 	}
 
@@ -131,7 +132,7 @@ func TestAgent_sendMetric(t *testing.T) {
 			defer ts.Close()
 
 			a := &Agent{
-				Client:        ts.Client(),
+				Client:        resty.NewWithClient(ts.Client()),
 				ServerAddress: ts.URL,
 			}
 

@@ -3,20 +3,22 @@ package server
 import (
 	"net/http"
 
-	"github.com/Shigabutdinoff/metrics/internal/handlers/middleware"
-	"github.com/Shigabutdinoff/metrics/internal/handlers/route"
+	"github.com/Shigabutdinoff/metrics/internal/handlers/route/metrics"
+	"github.com/Shigabutdinoff/metrics/internal/handlers/route/update"
+	"github.com/Shigabutdinoff/metrics/internal/handlers/route/value"
 	"github.com/Shigabutdinoff/metrics/internal/storage"
+	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
 )
 
 func New(st storage.Storage) {
-	mux := http.NewServeMux()
-	mux.Handle("/update/{type}/{name}/{value}", middleware.Conveyor(
-		route.Update(st),
-		middleware.EnsureContentTypeIsTextPlain,
-		middleware.EnsureMethodIsPost,
-	))
+	r := chi.NewRouter()
+	r.Use(middleware.AllowContentType("text/plain"))
+	r.Get("/", metrics.Index(st))
+	r.Post("/update/{type}/{name}/{value}", update.Store(st))
+	r.Get("/value/{type}/{name}", value.Show(st))
 
-	err := http.ListenAndServe(`:8080`, mux)
+	err := http.ListenAndServe(":8080", r)
 	if err != nil {
 		panic(err)
 	}

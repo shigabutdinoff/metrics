@@ -10,6 +10,7 @@ import (
 	"github.com/Shigabutdinoff/metrics/internal/model/metrics"
 	"github.com/Shigabutdinoff/metrics/internal/repository"
 	"github.com/Shigabutdinoff/metrics/internal/storage"
+	"github.com/go-resty/resty/v2"
 )
 
 const (
@@ -20,7 +21,7 @@ const (
 
 type Agent struct {
 	Storage        storage.Storage
-	Client         *http.Client
+	Client         *resty.Client
 	PollInterval   time.Duration
 	ReportInterval time.Duration
 	ServerAddress  string
@@ -29,7 +30,7 @@ type Agent struct {
 func New(st storage.Storage) Agent {
 	return Agent{
 		Storage:        st,
-		Client:         &http.Client{},
+		Client:         resty.New(),
 		PollInterval:   DefaultPollInterval,
 		ReportInterval: DefaultReportInterval,
 		ServerAddress:  DefaultServerAddress,
@@ -103,14 +104,15 @@ func (a *Agent) sendMetric(mtype metrics.Type, name string, value any) error {
 	}
 
 	path := fmt.Sprintf("%s/update/%s/%s/%s", a.ServerAddress, mtype, name, formattedValue)
-	resp, err := a.Client.Post(path, "text/plain", nil)
+	resp, err := a.Client.R().
+		SetHeader("Content-Type", "text/plain").
+		Post(path)
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("unexpected status: %d", resp.StatusCode)
+	if resp.StatusCode() != http.StatusOK {
+		return fmt.Errorf("unexpected status: %d", resp.StatusCode())
 	}
 
 	return nil

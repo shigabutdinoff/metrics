@@ -1,11 +1,13 @@
 package request
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/Shigabutdinoff/metrics/internal/model/metrics"
+	"github.com/go-chi/chi/v5"
 )
 
 func TestUpdate_Validate(t *testing.T) {
@@ -74,9 +76,11 @@ func TestUpdate_Validate(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			req := httptest.NewRequest(http.MethodPost, "/update", nil)
-			req.SetPathValue("type", tt.typeValue)
-			req.SetPathValue("name", tt.nameValue)
-			req.SetPathValue("value", tt.rawValue)
+			routeCtx := chi.NewRouteContext()
+			routeCtx.URLParams.Add("type", tt.typeValue)
+			routeCtx.URLParams.Add("name", tt.nameValue)
+			routeCtx.URLParams.Add("value", tt.rawValue)
+			req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, routeCtx))
 
 			u := &Update{Request: req}
 			got, err := u.Validate()

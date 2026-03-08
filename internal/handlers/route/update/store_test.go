@@ -1,4 +1,4 @@
-package route
+package update
 
 import (
 	"net/http"
@@ -6,9 +6,10 @@ import (
 	"testing"
 
 	"github.com/Shigabutdinoff/metrics/internal/storage"
+	"github.com/go-chi/chi/v5"
 )
 
-func TestUpdate(t *testing.T) {
+func TestStore(t *testing.T) {
 	tests := []struct {
 		name       string
 		typeValue  string
@@ -58,7 +59,7 @@ func TestUpdate(t *testing.T) {
 		{
 			name:       "returns not found on empty name",
 			typeValue:  "gauge",
-			nameValue:  " ",
+			nameValue:  "%20",
 			rawValue:   "1",
 			wantStatus: http.StatusNotFound,
 		},
@@ -67,15 +68,17 @@ func TestUpdate(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			st := storage.NewMemStorage()
-			h := Update(st)
+			r := chi.NewRouter()
+			r.Post("/update/{type}/{name}/{value}", Store(st))
 
-			req := httptest.NewRequest(http.MethodPost, "/update", nil)
-			req.SetPathValue("type", tt.typeValue)
-			req.SetPathValue("name", tt.nameValue)
-			req.SetPathValue("value", tt.rawValue)
+			req := httptest.NewRequest(
+				http.MethodPost,
+				"/update/"+tt.typeValue+"/"+tt.nameValue+"/"+tt.rawValue,
+				nil,
+			)
 			rr := httptest.NewRecorder()
 
-			h.ServeHTTP(rr, req)
+			r.ServeHTTP(rr, req)
 
 			if rr.Code != tt.wantStatus {
 				t.Fatalf("status = %d, want %d", rr.Code, tt.wantStatus)

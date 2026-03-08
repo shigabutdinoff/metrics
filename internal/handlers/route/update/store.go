@@ -1,4 +1,4 @@
-package route
+package update
 
 import (
 	"net/http"
@@ -8,7 +8,7 @@ import (
 	"github.com/Shigabutdinoff/metrics/internal/storage"
 )
 
-func Update(st storage.Storage) http.HandlerFunc {
+func Store(st storage.Storage) http.HandlerFunc {
 	return func(res http.ResponseWriter, req *http.Request) {
 		upd := &request.Update{Request: req}
 		code, err := upd.Validate()
