@@ -11,14 +11,14 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 )
 
-func New(st storage.Storage) {
+func New(st storage.Storage, addr string) {
 	r := chi.NewRouter()
 	r.Use(middleware.AllowContentType("text/plain"))
 	r.Get("/", metrics.Index(st))
 	r.Post("/update/{type}/{name}/{value}", update.Store(st))
 	r.Get("/value/{type}/{name}", value.Show(st))
 
-	err := http.ListenAndServe(":8080", r)
+	err := http.ListenAndServe(addr, r)
 	if err != nil {
 		panic(err)
 	}

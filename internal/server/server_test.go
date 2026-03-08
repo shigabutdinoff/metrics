@@ -18,7 +18,7 @@ func TestNew(t *testing.T) {
 	panicCh := make(chan any, 1)
 	go func() {
 		defer func() { panicCh <- recover() }()
-		New(storage.NewMemStorage())
+		New(storage.NewMemStorage(), ":8080")
 	}()
 
 	select {
