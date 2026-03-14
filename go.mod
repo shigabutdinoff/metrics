@@ -1,6 +1,6 @@
 module github.com/shigabutdinoff/metrics
 
-go 1.24.13
+go 1.25.8
 
 require (
 	github.com/caarlos0/env/v11 v11.4.0
@@ -8,4 +8,4 @@ require (
 	github.com/go-resty/resty/v2 v2.17.2
 )
 
-require golang.org/x/net v0.43.0 // indirect
+require golang.org/x/net v0.52.0 // indirect
