@@ -3,7 +3,7 @@ package storage
 import (
 	"testing"
 
-	"github.com/Shigabutdinoff/metrics/internal/model/metrics"
+	"github.com/shigabutdinoff/metrics/internal/model/metrics"
 )
 
 func TestMemStorage_AddCounter(t *testing.T) {

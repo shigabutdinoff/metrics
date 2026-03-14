@@ -7,8 +7,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/Shigabutdinoff/metrics/internal/model/metrics"
 	"github.com/go-chi/chi/v5"
+	"github.com/shigabutdinoff/metrics/internal/model/metrics"
 )
 
 type Update struct {

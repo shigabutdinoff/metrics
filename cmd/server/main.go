@@ -2,22 +2,32 @@ package main
 
 import (
 	"flag"
+	"log"
 
-	"github.com/Shigabutdinoff/metrics/internal/server"
-	"github.com/Shigabutdinoff/metrics/internal/storage"
+	"github.com/caarlos0/env/v11"
+	"github.com/shigabutdinoff/metrics/internal/server"
+	"github.com/shigabutdinoff/metrics/internal/storage"
 )
 
 var (
-	addr = flag.String("address", "localhost:8080", "HTTP server endpoint address")
+	address = flag.String("address", server.DefaultAddress, "HTTP server endpoint address")
 )
 
 func init() {
-	flag.StringVar(addr, "a", "localhost:8080", "HTTP server endpoint address (shorthand)")
+	flag.StringVar(address, "a", server.DefaultAddress, "HTTP server endpoint address (shorthand)")
 }
 
 func main() {
 	flag.Parse()
 
 	st := storage.NewMemStorage()
-	server.New(st, *addr)
+	s := server.New(st)
+	s.Address = *address
+
+	err := env.Parse(&s)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	s.Run()
 }

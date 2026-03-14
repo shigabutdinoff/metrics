@@ -3,7 +3,7 @@ package repository
 import (
 	"runtime"
 
-	"github.com/Shigabutdinoff/metrics/internal/model/metrics"
+	"github.com/shigabutdinoff/metrics/internal/model/metrics"
 )
 
 type MemStats struct {

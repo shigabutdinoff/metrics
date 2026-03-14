@@ -5,8 +5,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/Shigabutdinoff/metrics/internal/storage"
 	"github.com/go-chi/chi/v5"
+	"github.com/shigabutdinoff/metrics/internal/storage"
 )
 
 func TestStore(t *testing.T) {

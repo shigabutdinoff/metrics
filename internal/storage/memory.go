@@ -1,6 +1,6 @@
 package storage
 
-import "github.com/Shigabutdinoff/metrics/internal/model/metrics"
+import "github.com/shigabutdinoff/metrics/internal/model/metrics"
 
 type Storage interface {
 	SetGauge(name string, value metrics.GaugeValue)

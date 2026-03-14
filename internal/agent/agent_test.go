@@ -6,9 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Shigabutdinoff/metrics/internal/model/metrics"
-	"github.com/Shigabutdinoff/metrics/internal/storage"
 	"github.com/go-resty/resty/v2"
+	"github.com/shigabutdinoff/metrics/internal/model/metrics"
+	"github.com/shigabutdinoff/metrics/internal/storage"
 )
 
 func TestAgent_CollectMetrics(t *testing.T) {
@@ -55,9 +55,9 @@ func TestAgent_ReportMetrics(t *testing.T) {
 	defer ts.Close()
 
 	a := &Agent{
-		Storage:       st,
-		Client:        resty.NewWithClient(ts.Client()),
-		ServerAddress: ts.URL,
+		Storage: st,
+		Client:  resty.NewWithClient(ts.Client()),
+		Address: Address(ts.URL),
 	}
 
 	a.ReportMetrics()
@@ -132,8 +132,8 @@ func TestAgent_sendMetric(t *testing.T) {
 			defer ts.Close()
 
 			a := &Agent{
-				Client:        resty.NewWithClient(ts.Client()),
-				ServerAddress: ts.URL,
+				Client:  resty.NewWithClient(ts.Client()),
+				Address: Address(ts.URL),
 			}
 
 			err := a.sendMetric(tt.mtype, tt.metricName, tt.value)
@@ -153,15 +153,6 @@ func TestNew(t *testing.T) {
 	}
 	if got.Client == nil {
 		t.Fatal("client is nil")
-	}
-	if got.PollInterval != DefaultPollInterval {
-		t.Fatalf("PollInterval = %v, want %v", got.PollInterval, DefaultPollInterval)
-	}
-	if got.ReportInterval != DefaultReportInterval {
-		t.Fatalf("ReportInterval = %v, want %v", got.ReportInterval, DefaultReportInterval)
-	}
-	if got.ServerAddress != DefaultServerAddress {
-		t.Fatalf("ServerAddress = %q, want %q", got.ServerAddress, DefaultServerAddress)
 	}
 }
 

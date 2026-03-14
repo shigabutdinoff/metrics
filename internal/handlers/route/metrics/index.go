@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/Shigabutdinoff/metrics/internal/storage"
+	"github.com/shigabutdinoff/metrics/internal/storage"
 )
 
 func Index(st storage.Storage) http.HandlerFunc {

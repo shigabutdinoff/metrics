@@ -2,23 +2,25 @@ package main
 
 import (
 	"flag"
+	"log"
 	"strings"
 	"time"
 
-	"github.com/Shigabutdinoff/metrics/internal/agent"
-	"github.com/Shigabutdinoff/metrics/internal/storage"
+	"github.com/caarlos0/env/v11"
+	"github.com/shigabutdinoff/metrics/internal/agent"
+	"github.com/shigabutdinoff/metrics/internal/storage"
 )
 
 var (
-	serverAddress     = flag.String("address", "localhost:8080", "HTTP server endpoint address")
-	reportIntervalSec = flag.Int("report-interval", int(agent.DefaultReportInterval/time.Second), "report interval in seconds")
-	pollIntervalSec   = flag.Int("poll-interval", int(agent.DefaultPollInterval/time.Second), "poll interval in seconds")
+	address           = flag.String("address", string(agent.DefaultAddress), "HTTP server endpoint address")
+	reportIntervalSec = flag.Int64("report-interval", int64(agent.DefaultReportInterval), "report interval in seconds")
+	pollIntervalSec   = flag.Int64("poll-interval", int64(agent.DefaultPollInterval), "poll interval in seconds")
 )
 
 func init() {
-	flag.StringVar(serverAddress, "a", "localhost:8080", "HTTP server endpoint address (shorthand)")
-	flag.IntVar(reportIntervalSec, "r", int(agent.DefaultReportInterval/time.Second), "report interval in seconds (shorthand)")
-	flag.IntVar(pollIntervalSec, "p", int(agent.DefaultPollInterval/time.Second), "poll interval in seconds (shorthand)")
+	flag.StringVar(address, "a", string(agent.DefaultAddress), "HTTP server endpoint address (shorthand)")
+	flag.Int64Var(reportIntervalSec, "r", int64(agent.DefaultReportInterval), "report interval in seconds (shorthand)")
+	flag.Int64Var(pollIntervalSec, "p", int64(agent.DefaultPollInterval), "poll interval in seconds (shorthand)")
 }
 
 func main() {
@@ -26,13 +28,22 @@ func main() {
 
 	st := storage.NewMemStorage()
 	a := agent.New(st)
-	a.ServerAddress = normalizeServerAddress(*serverAddress)
-	a.ReportInterval = time.Duration(*reportIntervalSec) * time.Second
-	a.PollInterval = time.Duration(*pollIntervalSec) * time.Second
+	a.Address = agent.Address(*address)
+	a.ReportInterval = time.Duration(*reportIntervalSec)
+	a.PollInterval = time.Duration(*pollIntervalSec)
+
+	err := env.Parse(&a)
+	a.Address = agent.Address(normalizeAddress(string(a.Address)))
+	a.PollInterval = time.Duration(a.PollIntervalInt64) * time.Second
+	a.ReportInterval = time.Duration(a.ReportIntervalInt64) * time.Second
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	a.Run()
 }
 
-func normalizeServerAddress(address string) string {
+func normalizeAddress(address string) string {
 	if strings.HasPrefix(address, "http://") || strings.HasPrefix(address, "https://") {
 		return address
 	}

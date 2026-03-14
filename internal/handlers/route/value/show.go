@@ -7,9 +7,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/Shigabutdinoff/metrics/internal/model/metrics"
-	"github.com/Shigabutdinoff/metrics/internal/storage"
 	"github.com/go-chi/chi/v5"
+	"github.com/shigabutdinoff/metrics/internal/model/metrics"
+	"github.com/shigabutdinoff/metrics/internal/storage"
 )
 
 func Show(st storage.Storage) http.HandlerFunc {

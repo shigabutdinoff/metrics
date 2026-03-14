@@ -7,33 +7,41 @@ import (
 	"runtime"
 	"time"
 
-	"github.com/Shigabutdinoff/metrics/internal/model/metrics"
-	"github.com/Shigabutdinoff/metrics/internal/repository"
-	"github.com/Shigabutdinoff/metrics/internal/storage"
 	"github.com/go-resty/resty/v2"
+	"github.com/shigabutdinoff/metrics/internal/model/metrics"
+	"github.com/shigabutdinoff/metrics/internal/repository"
+	"github.com/shigabutdinoff/metrics/internal/storage"
+)
+
+type (
+	PollInterval   int64
+	ReportInterval int64
+	Address        string
 )
 
 const (
-	DefaultPollInterval   = 2 * time.Second
-	DefaultReportInterval = 10 * time.Second
-	DefaultServerAddress  = "http://localhost:8080"
+	DefaultPollInterval   PollInterval   = 2
+	DefaultReportInterval ReportInterval = 10
+	DefaultAddress        Address        = "http://localhost:8080"
 )
 
 type Agent struct {
-	Storage        storage.Storage
-	Client         *resty.Client
-	PollInterval   time.Duration
-	ReportInterval time.Duration
-	ServerAddress  string
+	Storage             storage.Storage
+	Client              *resty.Client
+	PollInterval        time.Duration
+	ReportInterval      time.Duration
+	PollIntervalInt64   PollInterval   `env:"POLL_INTERVAL"`
+	ReportIntervalInt64 ReportInterval `env:"REPORT_INTERVAL"`
+	Address             Address        `env:"ADDRESS"`
 }
 
 func New(st storage.Storage) Agent {
 	return Agent{
-		Storage:        st,
-		Client:         resty.New(),
-		PollInterval:   DefaultPollInterval,
-		ReportInterval: DefaultReportInterval,
-		ServerAddress:  DefaultServerAddress,
+		Storage:             st,
+		Client:              resty.New(),
+		PollIntervalInt64:   DefaultPollInterval,
+		ReportIntervalInt64: DefaultReportInterval,
+		Address:             DefaultAddress,
 	}
 }
 
@@ -103,7 +111,8 @@ func (a *Agent) sendMetric(mtype metrics.Type, name string, value any) error {
 		return err
 	}
 
-	path := fmt.Sprintf("%s/update/%s/%s/%s", a.ServerAddress, mtype, name, formattedValue)
+	baseURL := a.Address
+	path := fmt.Sprintf("%s/update/%s/%s/%s", baseURL, mtype, name, formattedValue)
 	resp, err := a.Client.R().
 		SetHeader("Content-Type", "text/plain").
 		Post(path)

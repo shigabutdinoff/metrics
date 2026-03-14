@@ -3,9 +3,9 @@ package update
 import (
 	"net/http"
 
-	"github.com/Shigabutdinoff/metrics/internal/handlers/request"
-	"github.com/Shigabutdinoff/metrics/internal/model/metrics"
-	"github.com/Shigabutdinoff/metrics/internal/storage"
+	"github.com/shigabutdinoff/metrics/internal/handlers/request"
+	"github.com/shigabutdinoff/metrics/internal/model/metrics"
+	"github.com/shigabutdinoff/metrics/internal/storage"
 )
 
 func Store(st storage.Storage) http.HandlerFunc {

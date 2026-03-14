@@ -6,8 +6,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/Shigabutdinoff/metrics/internal/model/metrics"
 	"github.com/go-chi/chi/v5"
+	"github.com/shigabutdinoff/metrics/internal/model/metrics"
 )
 
 func TestUpdate_Validate(t *testing.T) {

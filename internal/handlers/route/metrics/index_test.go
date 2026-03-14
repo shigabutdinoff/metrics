@@ -5,8 +5,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/Shigabutdinoff/metrics/internal/model/metrics"
-	"github.com/Shigabutdinoff/metrics/internal/storage"
+	"github.com/shigabutdinoff/metrics/internal/model/metrics"
+	"github.com/shigabutdinoff/metrics/internal/storage"
 )
 
 type stubStorage struct {
