@@ -2,11 +2,11 @@ package main
 
 import (
 	"flag"
-	"log"
 
 	"github.com/caarlos0/env/v11"
 	"github.com/shigabutdinoff/metrics/internal/server"
 	"github.com/shigabutdinoff/metrics/internal/storage"
+	"go.uber.org/zap"
 )
 
 var (
@@ -20,13 +20,21 @@ func init() {
 func main() {
 	flag.Parse()
 
+	// создаём предустановленный регистратор zap
+	logger, err := zap.NewDevelopment()
+	if err != nil {
+		// вызываем панику, если ошибка
+		panic(err)
+	}
+	defer logger.Sync()
+
 	st := storage.NewMemStorage()
-	s := server.New(st)
+	s := server.New(st, logger)
 	s.Address = *address
 
-	err := env.Parse(&s)
+	err = env.Parse(&s)
 	if err != nil {
-		log.Fatal(err)
+		logger.Error("Не удалось распарить окружение", zap.Error(err))
 	}
 
 	s.Run()

@@ -7,11 +7,21 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/shigabutdinoff/metrics/internal/storage"
+	"go.uber.org/zap"
 )
 
 func TestNew(t *testing.T) {
 	st := storage.NewMemStorage()
-	s := New(st)
+
+	// создаём предустановленный регистратор zap
+	logger, err := zap.NewDevelopment()
+	if err != nil {
+		// вызываем панику, если ошибка
+		panic(err)
+	}
+	defer logger.Sync()
+
+	s := New(st, logger)
 
 	if s.Storage != st {
 		t.Fatalf("New() storage mismatch")

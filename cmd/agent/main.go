@@ -2,13 +2,13 @@ package main
 
 import (
 	"flag"
-	"log"
 	"strings"
 	"time"
 
 	"github.com/caarlos0/env/v11"
 	"github.com/shigabutdinoff/metrics/internal/agent"
 	"github.com/shigabutdinoff/metrics/internal/storage"
+	"go.uber.org/zap"
 )
 
 var (
@@ -26,18 +26,26 @@ func init() {
 func main() {
 	flag.Parse()
 
+	// создаём предустановленный регистратор zap
+	logger, err := zap.NewDevelopment()
+	if err != nil {
+		// вызываем панику, если ошибка
+		panic(err)
+	}
+	defer logger.Sync()
+
 	st := storage.NewMemStorage()
 	a := agent.New(st)
 	a.Address = agent.Address(*address)
 	a.ReportInterval = time.Duration(*reportIntervalSec)
 	a.PollInterval = time.Duration(*pollIntervalSec)
 
-	err := env.Parse(&a)
+	err = env.Parse(&a)
 	a.Address = agent.Address(normalizeAddress(string(a.Address)))
 	a.PollInterval = time.Duration(a.PollIntervalInt64) * time.Second
 	a.ReportInterval = time.Duration(a.ReportIntervalInt64) * time.Second
 	if err != nil {
-		log.Fatal(err)
+		logger.Error("Не удалось распарить окружение", zap.Error(err))
 	}
 
 	a.Run()
