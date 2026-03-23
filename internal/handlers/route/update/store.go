@@ -1,14 +1,16 @@
 package update
 
 import (
+	"encoding/json"
 	"net/http"
+	"strings"
 
 	"github.com/shigabutdinoff/metrics/internal/handlers/request"
 	"github.com/shigabutdinoff/metrics/internal/model/metrics"
 	"github.com/shigabutdinoff/metrics/internal/storage"
 )
 
-func Store(st storage.Storage) http.HandlerFunc {
+func StoreTextPlain(st storage.Storage) http.HandlerFunc {
 	return func(res http.ResponseWriter, req *http.Request) {
 		upd := &request.Update{Request: req}
 		code, err := upd.Validate()
@@ -29,5 +31,36 @@ func Store(st storage.Storage) http.HandlerFunc {
 
 		res.WriteHeader(code)
 		_, _ = res.Write([]byte("OK"))
+	}
+}
+
+func StoreApplicationJson(st storage.Storage) http.HandlerFunc {
+	return func(res http.ResponseWriter, req *http.Request) {
+		var upd metrics.Metrics
+		if err := json.NewDecoder(req.Body).Decode(&upd); err != nil {
+			http.Error(res, err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		if strings.TrimSpace(upd.ID) == "" {
+			http.Error(res, "invalid metric name", http.StatusNotFound)
+			return
+		}
+
+		switch upd.MType {
+		case metrics.Gauge:
+			st.SetGauge(upd.ID, upd.Value)
+		case metrics.Counter:
+			st.AddCounter(upd.ID, upd.Delta)
+		default:
+			http.Error(res, "invalid metric type", http.StatusBadRequest)
+			return
+		}
+
+		res.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(res).Encode(upd); err != nil {
+			http.Error(res, err.Error(), http.StatusInternalServerError)
+			return
+		}
 	}
 }

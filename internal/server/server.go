@@ -26,11 +26,18 @@ type Server struct {
 
 func New(st storage.Storage, logger *zap.Logger) Server {
 	r := chi.NewRouter()
-	r.Use(middleware.AllowContentType("text/plain"))
 	r.Use(customMiddleware.WithLogging(logger))
-	r.Get("/", metrics.Index(st))
-	r.Post("/update/{type}/{name}/{value}", update.Store(st))
-	r.Get("/value/{type}/{name}", value.Show(st))
+	r.Group(func(r chi.Router) {
+		r.Use(middleware.AllowContentType("text/plain"))
+		r.Get("/", metrics.Index(st))
+		r.Post("/update/{type}/{name}/{value}", update.StoreTextPlain(st))
+		r.Get("/value/{type}/{name}", value.ShowTextPlain(st))
+	})
+	r.Group(func(r chi.Router) {
+		r.Use(middleware.AllowContentType("application/json"))
+		r.Post("/update/", update.StoreApplicationJson(st))
+		r.Post("/value/", value.ShowApplicationJson(st))
+	})
 
 	return Server{
 		Storage: st,

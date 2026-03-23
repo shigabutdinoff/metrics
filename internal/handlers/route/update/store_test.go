@@ -9,7 +9,7 @@ import (
 	"github.com/shigabutdinoff/metrics/internal/storage"
 )
 
-func TestStore(t *testing.T) {
+func TestStoreTextPlain(t *testing.T) {
 	tests := []struct {
 		name       string
 		typeValue  string
@@ -69,7 +69,7 @@ func TestStore(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			st := storage.NewMemStorage()
 			r := chi.NewRouter()
-			r.Post("/update/{type}/{name}/{value}", Store(st))
+			r.Post("/update/{type}/{name}/{value}", StoreTextPlain(st))
 
 			req := httptest.NewRequest(
 				http.MethodPost,
