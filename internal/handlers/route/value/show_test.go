@@ -88,7 +88,7 @@ func TestShow(t *testing.T) {
 	}
 }
 
-func TestShowApplicationJson(t *testing.T) {
+func TestShowApplicationJSON(t *testing.T) {
 	tests := []struct {
 		name         string
 		prepare      func(st *storage.MemStorage)
@@ -164,7 +164,7 @@ func TestShowApplicationJson(t *testing.T) {
 			req.Header.Set("Content-Type", "application/json")
 			rr := httptest.NewRecorder()
 
-			ShowApplicationJson(st).ServeHTTP(rr, req)
+			ShowApplicationJSON(st).ServeHTTP(rr, req)
 
 			if rr.Code != tt.wantStatus {
 				t.Fatalf("status = %d, want %d", rr.Code, tt.wantStatus)

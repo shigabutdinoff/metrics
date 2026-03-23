@@ -35,8 +35,8 @@ func New(st storage.Storage, logger *zap.Logger) Server {
 	})
 	r.Group(func(r chi.Router) {
 		r.Use(middleware.AllowContentType("application/json"))
-		r.Post("/update/", update.StoreApplicationJson(st))
-		r.Post("/value/", value.ShowApplicationJson(st))
+		r.Post("/update/", update.StoreApplicationJSON(st))
+		r.Post("/value/", value.ShowApplicationJSON(st))
 	})
 
 	return Server{

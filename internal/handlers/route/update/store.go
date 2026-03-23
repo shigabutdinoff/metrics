@@ -34,7 +34,7 @@ func StoreTextPlain(st storage.Storage) http.HandlerFunc {
 	}
 }
 
-func StoreApplicationJson(st storage.Storage) http.HandlerFunc {
+func StoreApplicationJSON(st storage.Storage) http.HandlerFunc {
 	return func(res http.ResponseWriter, req *http.Request) {
 		var upd metrics.Metrics
 		if err := json.NewDecoder(req.Body).Decode(&upd); err != nil {

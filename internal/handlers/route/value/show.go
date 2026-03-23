@@ -45,7 +45,7 @@ func ShowTextPlain(st storage.Storage) http.HandlerFunc {
 	}
 }
 
-func ShowApplicationJson(st storage.Storage) http.HandlerFunc {
+func ShowApplicationJSON(st storage.Storage) http.HandlerFunc {
 	return func(res http.ResponseWriter, req *http.Request) {
 		var upd metrics.Metrics
 		if err := json.NewDecoder(req.Body).Decode(&upd); err != nil {
