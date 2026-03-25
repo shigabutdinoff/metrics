@@ -1,12 +1,17 @@
 package server
 
 import (
+	"bytes"
+	"compress/gzip"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/shigabutdinoff/metrics/internal/handlers/middleware/compress"
 	"github.com/shigabutdinoff/metrics/internal/storage"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
 
@@ -89,5 +94,85 @@ func TestServer_Run(t *testing.T) {
 		}()
 
 		s.Run()
+	})
+}
+
+// ...
+
+func TestGzipCompression(t *testing.T) {
+	requestBody := `{
+        "request": {
+            "type": "SimpleUtterance",
+            "command": "sudo do something"
+        },
+        "version": "1.0"
+    }`
+
+	// ожидаемое содержимое тела ответа при успешном запросе
+	successBody := `{
+        "response": {
+            "text": "Извините, я пока ничего не умею"
+        },
+        "version": "1.0"
+    }`
+
+	handler := compress.GzipMiddleware()(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
+		require.JSONEq(t, requestBody, string(body))
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, err = w.Write([]byte(successBody))
+		require.NoError(t, err)
+	}))
+
+	srv := httptest.NewServer(handler)
+	defer srv.Close()
+
+	t.Run("sends_gzip", func(t *testing.T) {
+		buf := bytes.NewBuffer(nil)
+		zb := gzip.NewWriter(buf)
+		_, err := zb.Write([]byte(requestBody))
+		require.NoError(t, err)
+		err = zb.Close()
+		require.NoError(t, err)
+
+		r := httptest.NewRequest("POST", srv.URL, buf)
+		r.RequestURI = ""
+		r.Header.Set("Content-Encoding", "gzip")
+		r.Header.Set("Accept-Encoding", "")
+
+		resp, err := http.DefaultClient.Do(r)
+		require.NoError(t, err)
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+
+		defer resp.Body.Close()
+
+		b, err := io.ReadAll(resp.Body)
+		require.NoError(t, err)
+		require.JSONEq(t, successBody, string(b))
+	})
+
+	t.Run("accepts_gzip", func(t *testing.T) {
+		buf := bytes.NewBufferString(requestBody)
+		r := httptest.NewRequest("POST", srv.URL, buf)
+		r.RequestURI = ""
+		r.Header.Set("Accept-Encoding", "gzip")
+
+		resp, err := http.DefaultClient.Do(r)
+		require.NoError(t, err)
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		require.Equal(t, "gzip", resp.Header.Get("Content-Encoding"))
+
+		defer resp.Body.Close()
+
+		zr, err := gzip.NewReader(resp.Body)
+		require.NoError(t, err)
+
+		b, err := io.ReadAll(zr)
+		require.NoError(t, err)
+
+		require.JSONEq(t, successBody, string(b))
 	})
 }

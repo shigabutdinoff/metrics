@@ -1,9 +1,11 @@
 package agent
 
 import (
+	"compress/gzip"
+	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 
 	"github.com/go-resty/resty/v2"
@@ -43,13 +45,33 @@ func TestAgent_ReportMetrics(t *testing.T) {
 	st.SetGauge("Alloc", &g)
 	st.AddCounter("PollCount", &c)
 
-	var received []string
 	var methods []string
 	var contentTypes []string
+	var contentEncodings []string
+	var acceptedEncodings []string
+	var received []metrics.Metrics
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		received = append(received, r.Method+" "+r.URL.Path)
 		methods = append(methods, r.Method)
 		contentTypes = append(contentTypes, r.Header.Get("Content-Type"))
+		contentEncodings = append(contentEncodings, r.Header.Get("Content-Encoding"))
+		acceptedEncodings = append(acceptedEncodings, r.Header.Get("Accept-Encoding"))
+
+		zr, err := gzip.NewReader(r.Body)
+		if err != nil {
+			t.Fatalf("gzip.NewReader() error = %v", err)
+		}
+		defer zr.Close()
+
+		body, err := io.ReadAll(zr)
+		if err != nil {
+			t.Fatalf("io.ReadAll() error = %v", err)
+		}
+
+		var metric metrics.Metrics
+		if err := json.Unmarshal(body, &metric); err != nil {
+			t.Fatalf("json.Unmarshal() error = %v", err)
+		}
+		received = append(received, metric)
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer ts.Close()
@@ -71,17 +93,36 @@ func TestAgent_ReportMetrics(t *testing.T) {
 		}
 	}
 	for _, ct := range contentTypes {
-		if !strings.HasPrefix(ct, "text/plain") {
-			t.Fatalf("content type = %q, want prefix text/plain", ct)
+		if ct != "application/json" {
+			t.Fatalf("content type = %q, want application/json", ct)
+		}
+	}
+	for _, ce := range contentEncodings {
+		if ce != "gzip" {
+			t.Fatalf("content encoding = %q, want gzip", ce)
+		}
+	}
+	for _, ae := range acceptedEncodings {
+		if ae != "gzip" {
+			t.Fatalf("accept encoding = %q, want gzip", ae)
 		}
 	}
 
-	paths := strings.Join(received, "\n")
-	if !strings.Contains(paths, "/update/gauge/Alloc/12.500000") {
-		t.Fatalf("gauge endpoint not called, got %q", paths)
+	gotGauge := false
+	gotCounter := false
+	for _, metric := range received {
+		switch metric.ID {
+		case "Alloc":
+			gotGauge = metric.MType == metrics.Gauge && metric.Value != nil && *metric.Value == 12.5
+		case "PollCount":
+			gotCounter = metric.MType == metrics.Counter && metric.Delta != nil && *metric.Delta == 7
+		}
 	}
-	if !strings.Contains(paths, "/update/counter/PollCount/7") {
-		t.Fatalf("counter endpoint not called, got %q", paths)
+	if !gotGauge {
+		t.Fatal("gauge payload not received")
+	}
+	if !gotCounter {
+		t.Fatal("counter payload not received")
 	}
 }
 
@@ -127,6 +168,15 @@ func TestAgent_sendMetric(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/update/" {
+					t.Fatalf("path = %q, want /update/", r.URL.Path)
+				}
+				if r.Header.Get("Content-Type") != "application/json" {
+					t.Fatalf("content type = %q, want application/json", r.Header.Get("Content-Type"))
+				}
+				if r.Header.Get("Content-Encoding") != "gzip" {
+					t.Fatalf("content encoding = %q, want gzip", r.Header.Get("Content-Encoding"))
+				}
 				w.WriteHeader(tt.statusCode)
 			}))
 			defer ts.Close()

@@ -1,6 +1,9 @@
 package agent
 
 import (
+	"bytes"
+	"compress/gzip"
+	"encoding/json"
 	"fmt"
 	"math/rand"
 	"net/http"
@@ -106,15 +109,49 @@ func (a *Agent) ReportMetrics() {
 }
 
 func (a *Agent) sendMetric(mtype metrics.Type, name string, value any) error {
-	formattedValue, err := formatMetricValue(mtype, name, value)
+	requestBody := metrics.Metrics{
+		ID:    name,
+		MType: mtype,
+	}
+	switch mtype {
+	case metrics.Gauge:
+		gauge, ok := value.(metrics.GaugeValue)
+		if !ok || gauge == nil {
+			return fmt.Errorf("invalid gauge value for %q", name)
+		}
+		requestBody.Value = gauge
+	case metrics.Counter:
+		counter, ok := value.(metrics.CounterValue)
+		if !ok || counter == nil {
+			return fmt.Errorf("invalid counter value for %q", name)
+		}
+		requestBody.Delta = counter
+	default:
+		return fmt.Errorf("unsupported metric type: %s", mtype)
+	}
+
+	body, err := json.Marshal(requestBody)
 	if err != nil {
 		return err
 	}
 
+	var compressedBody bytes.Buffer
+	zw := gzip.NewWriter(&compressedBody)
+	if _, err := zw.Write(body); err != nil {
+		return err
+	}
+	if err := zw.Close(); err != nil {
+		return err
+	}
+
 	baseURL := a.Address
-	path := fmt.Sprintf("%s/update/%s/%s/%s", baseURL, mtype, name, formattedValue)
+	path := fmt.Sprintf("%s/update/", baseURL)
+
 	resp, err := a.Client.R().
-		SetHeader("Content-Type", "text/plain").
+		SetHeader("Content-Type", "application/json").
+		SetHeader("Content-Encoding", "gzip").
+		SetHeader("Accept-Encoding", "gzip").
+		SetBody(compressedBody.Bytes()).
 		Post(path)
 	if err != nil {
 		return err
