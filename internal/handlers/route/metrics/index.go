@@ -14,7 +14,7 @@ func Index(st storage.Storage) http.HandlerFunc {
 	return func(res http.ResponseWriter, req *http.Request) {
 		rows := make([]string, 0)
 
-		for name, v := range st.GetGauges() {
+		for name, v := range st.GetGauges(req.Context()) {
 			if v == nil {
 				continue
 			}
@@ -23,7 +23,7 @@ func Index(st storage.Storage) http.HandlerFunc {
 				"<li>gauge "+html.EscapeString(name)+": "+html.EscapeString(strconv.FormatFloat(*v, 'f', -1, 64))+"</li>",
 			)
 		}
-		for name, v := range st.GetCounters() {
+		for name, v := range st.GetCounters(req.Context()) {
 			if v == nil {
 				continue
 			}

@@ -2,6 +2,7 @@ package agent
 
 import (
 	"compress/gzip"
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -19,7 +20,7 @@ func TestAgent_CollectMetrics(t *testing.T) {
 
 	a.CollectMetrics()
 
-	poll := st.GetCounters()["PollCount"]
+	poll := st.GetCounters(context.Background())["PollCount"]
 	if poll == nil {
 		t.Fatal("PollCount counter not set")
 	}
@@ -27,12 +28,12 @@ func TestAgent_CollectMetrics(t *testing.T) {
 		t.Fatalf("PollCount = %d, want 1", *poll)
 	}
 
-	randomValue := st.GetGauges()["RandomValue"]
+	randomValue := st.GetGauges(context.Background())["RandomValue"]
 	if randomValue == nil {
 		t.Fatal("RandomValue gauge not set")
 	}
 
-	alloc := st.GetGauges()["Alloc"]
+	alloc := st.GetGauges(context.Background())["Alloc"]
 	if alloc == nil {
 		t.Fatal("Alloc gauge from runtime stats not set")
 	}
@@ -42,8 +43,8 @@ func TestAgent_ReportMetrics(t *testing.T) {
 	st := storage.NewMemStorage()
 	g := 12.5
 	c := int64(7)
-	st.SetGauge("Alloc", &g)
-	st.AddCounter("PollCount", &c)
+	st.SetGauge(context.Background(), "Alloc", &g)
+	st.AddCounter(context.Background(), "PollCount", &c)
 
 	var methods []string
 	var contentTypes []string

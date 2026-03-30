@@ -24,7 +24,7 @@ func ShowTextPlain(st storage.Storage) http.HandlerFunc {
 		mType := metrics.Type(chi.URLParam(req, "type"))
 		switch mType {
 		case metrics.Gauge:
-			value := st.GetGauges()[name]
+			value := st.GetGauges(req.Context())[name]
 			if value == nil {
 				http.Error(res, "metric not found", http.StatusNotFound)
 				return
@@ -32,7 +32,7 @@ func ShowTextPlain(st storage.Storage) http.HandlerFunc {
 			res.WriteHeader(http.StatusOK)
 			_, _ = res.Write([]byte(strconv.FormatFloat(*value, 'f', -1, 64)))
 		case metrics.Counter:
-			value := st.GetCounters()[name]
+			value := st.GetCounters(req.Context())[name]
 			if value == nil {
 				http.Error(res, "metric not found", http.StatusNotFound)
 				return
@@ -60,7 +60,7 @@ func ShowApplicationJSON(st storage.Storage) http.HandlerFunc {
 
 		switch upd.MType {
 		case metrics.Gauge:
-			value := st.GetGauges()[upd.ID]
+			value := st.GetGauges(req.Context())[upd.ID]
 			if value == nil {
 				http.Error(res, "metric not found", http.StatusNotFound)
 				return
@@ -68,7 +68,7 @@ func ShowApplicationJSON(st storage.Storage) http.HandlerFunc {
 			upd.Value = value
 			upd.Delta = nil
 		case metrics.Counter:
-			value := st.GetCounters()[upd.ID]
+			value := st.GetCounters(req.Context())[upd.ID]
 			if value == nil {
 				http.Error(res, "metric not found", http.StatusNotFound)
 				return

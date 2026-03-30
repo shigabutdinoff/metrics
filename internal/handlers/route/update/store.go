@@ -21,9 +21,9 @@ func StoreTextPlain(st storage.Storage) http.HandlerFunc {
 
 		switch upd.MType {
 		case metrics.Gauge:
-			st.SetGauge(upd.ID, upd.Value)
+			st.SetGauge(req.Context(), upd.ID, upd.Value)
 		case metrics.Counter:
-			st.AddCounter(upd.ID, upd.Delta)
+			st.AddCounter(req.Context(), upd.ID, upd.Delta)
 		default:
 			http.Error(res, "invalid metric type", http.StatusBadRequest)
 			return
@@ -49,9 +49,9 @@ func StoreApplicationJSON(st storage.Storage) http.HandlerFunc {
 
 		switch upd.MType {
 		case metrics.Gauge:
-			st.SetGauge(upd.ID, upd.Value)
+			st.SetGauge(req.Context(), upd.ID, upd.Value)
 		case metrics.Counter:
-			st.AddCounter(upd.ID, upd.Delta)
+			st.AddCounter(req.Context(), upd.ID, upd.Delta)
 		default:
 			http.Error(res, "invalid metric type", http.StatusBadRequest)
 			return

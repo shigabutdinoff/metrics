@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"compress/gzip"
+	"context"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -59,7 +60,7 @@ func TestNew(t *testing.T) {
 			t.Fatalf("POST /update/gauge status = %d, want %d", rr.Code, http.StatusOK)
 		}
 
-		val := st.GetGauges()["temp"]
+		val := st.GetGauges(context.Background())["temp"]
 		if val == nil || *val != 12.5 {
 			t.Fatalf("gauge temp not updated, got %v", val)
 		}

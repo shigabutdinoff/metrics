@@ -1,6 +1,7 @@
 package persist
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -24,10 +25,11 @@ func New(st storage.Storage, path string, log *zap.Logger) *Service {
 
 func (s *Service) Save() error {
 	var out []m.Metrics
-	for name, v := range s.st.GetGauges() {
+	ctx := context.Background()
+	for name, v := range s.st.GetGauges(ctx) {
 		out = append(out, m.Metrics{ID: name, MType: m.Gauge, Value: v})
 	}
-	for name, d := range s.st.GetCounters() {
+	for name, d := range s.st.GetCounters(ctx) {
 		out = append(out, m.Metrics{ID: name, MType: m.Counter, Delta: d})
 	}
 
@@ -75,9 +77,9 @@ func (s *Service) Load() error {
 	for _, it := range list {
 		switch it.MType {
 		case m.Gauge:
-			s.st.SetGauge(it.ID, it.Value)
+			s.st.SetGauge(context.Background(), it.ID, it.Value)
 		case m.Counter:
-			s.st.AddCounter(it.ID, it.Delta)
+			s.st.AddCounter(context.Background(), it.ID, it.Delta)
 		}
 	}
 	return nil

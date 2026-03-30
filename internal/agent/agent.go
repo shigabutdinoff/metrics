@@ -3,6 +3,7 @@ package agent
 import (
 	"bytes"
 	"compress/gzip"
+	"context"
 	"encoding/json"
 	"fmt"
 	"math/rand"
@@ -41,7 +42,7 @@ type Agent struct {
 func New(st storage.Storage) Agent {
 	return Agent{
 		Storage:             st,
-		Client:              resty.New(),
+		Client:              resty.New().SetTimeout(10 * time.Second),
 		PollIntervalInt64:   DefaultPollInterval,
 		ReportIntervalInt64: DefaultReportInterval,
 		Address:             DefaultAddress,
@@ -55,7 +56,10 @@ func (a *Agent) Run() {
 	nextPoll := time.Now().Add(a.PollInterval)
 	nextReport := time.Now().Add(a.ReportInterval)
 
-	for {
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+
+	for range ticker.C {
 		now := time.Now()
 
 		if !now.Before(nextPoll) {
@@ -67,8 +71,6 @@ func (a *Agent) Run() {
 			a.ReportMetrics()
 			nextReport = now.Add(a.ReportInterval)
 		}
-
-		time.Sleep(100 * time.Millisecond)
 	}
 }
 
@@ -76,20 +78,22 @@ func (a *Agent) CollectMetrics() {
 	var m repository.MemStats
 	runtime.ReadMemStats(&m.MemStats)
 
+	ctx := context.Background()
 	for name, value := range m.GetGauges() {
 		v := value
-		a.Storage.SetGauge(name, &v)
+		a.Storage.SetGauge(ctx, name, &v)
 	}
 
 	delta := int64(1)
-	a.Storage.AddCounter("PollCount", &delta)
+	a.Storage.AddCounter(ctx, "PollCount", &delta)
 
 	randomValue := rand.Float64()
-	a.Storage.SetGauge("RandomValue", &randomValue)
+	a.Storage.SetGauge(ctx, "RandomValue", &randomValue)
 }
 
 func (a *Agent) ReportMetrics() {
-	for name, value := range a.Storage.GetGauges() {
+	ctx := context.Background()
+	for name, value := range a.Storage.GetGauges(ctx) {
 		if value == nil {
 			continue
 		}
@@ -98,7 +102,7 @@ func (a *Agent) ReportMetrics() {
 		}
 	}
 
-	for name, value := range a.Storage.GetCounters() {
+	for name, value := range a.Storage.GetCounters(ctx) {
 		if value == nil {
 			continue
 		}

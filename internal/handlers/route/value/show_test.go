@@ -2,6 +2,7 @@ package value
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -27,7 +28,7 @@ func TestShow(t *testing.T) {
 			nameValue: "alloc",
 			prepare: func(st *storage.MemStorage) {
 				v := 12.5
-				st.SetGauge("alloc", metrics.GaugeValue(&v))
+				st.SetGauge(context.Background(), "alloc", metrics.GaugeValue(&v))
 			},
 			wantStatus: http.StatusOK,
 			wantBody:   "12.5",
@@ -38,7 +39,7 @@ func TestShow(t *testing.T) {
 			nameValue: "requests",
 			prepare: func(st *storage.MemStorage) {
 				v := int64(7)
-				st.AddCounter("requests", metrics.CounterValue(&v))
+				st.AddCounter(context.Background(), "requests", metrics.CounterValue(&v))
 			},
 			wantStatus: http.StatusOK,
 			wantBody:   "7",
@@ -100,7 +101,7 @@ func TestShowApplicationJSON(t *testing.T) {
 			name: "returns gauge metric as json",
 			prepare: func(st *storage.MemStorage) {
 				v := 12.5
-				st.SetGauge("alloc", metrics.GaugeValue(&v))
+				st.SetGauge(context.Background(), "alloc", metrics.GaugeValue(&v))
 			},
 			requestBody: metrics.Metrics{
 				ID:    "alloc",
@@ -117,7 +118,7 @@ func TestShowApplicationJSON(t *testing.T) {
 			name: "returns counter metric as json",
 			prepare: func(st *storage.MemStorage) {
 				v := int64(7)
-				st.AddCounter("requests", metrics.CounterValue(&v))
+				st.AddCounter(context.Background(), "requests", metrics.CounterValue(&v))
 			},
 			requestBody: metrics.Metrics{
 				ID:    "requests",

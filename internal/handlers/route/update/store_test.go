@@ -1,6 +1,7 @@
 package update
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -28,7 +29,7 @@ func TestStoreTextPlain(t *testing.T) {
 			wantBody:   "OK",
 			assert: func(t *testing.T, st *storage.MemStorage) {
 				t.Helper()
-				g := st.GetGauges()["alloc"]
+				g := st.GetGauges(context.Background())["alloc"]
 				if g == nil || *g != 12.5 {
 					t.Fatalf("gauge alloc = %v, want 12.5", g)
 				}
@@ -43,7 +44,7 @@ func TestStoreTextPlain(t *testing.T) {
 			wantBody:   "OK",
 			assert: func(t *testing.T, st *storage.MemStorage) {
 				t.Helper()
-				c := st.GetCounters()["requests"]
+				c := st.GetCounters(context.Background())["requests"]
 				if c == nil || *c != 7 {
 					t.Fatalf("counter requests = %v, want 7", c)
 				}

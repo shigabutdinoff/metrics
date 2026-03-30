@@ -1,6 +1,7 @@
 package metrics
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -14,28 +15,28 @@ type stubStorage struct {
 	counters storage.Counters
 }
 
-func (s *stubStorage) SetGauge(name string, value metrics.GaugeValue) {
+func (s *stubStorage) SetGauge(_ context.Context, name string, value metrics.GaugeValue) {
 	if s.gauges == nil {
 		s.gauges = make(storage.Gauges)
 	}
 	s.gauges[name] = value
 }
 
-func (s *stubStorage) AddCounter(name string, delta metrics.CounterValue) {
+func (s *stubStorage) AddCounter(_ context.Context, name string, delta metrics.CounterValue) {
 	if s.counters == nil {
 		s.counters = make(storage.Counters)
 	}
 	s.counters[name] = delta
 }
 
-func (s *stubStorage) GetGauges() storage.Gauges {
+func (s *stubStorage) GetGauges(context.Context) storage.Gauges {
 	if s.gauges == nil {
 		return make(storage.Gauges)
 	}
 	return s.gauges
 }
 
-func (s *stubStorage) GetCounters() storage.Counters {
+func (s *stubStorage) GetCounters(context.Context) storage.Counters {
 	if s.counters == nil {
 		return make(storage.Counters)
 	}
@@ -64,10 +65,10 @@ func TestIndex(t *testing.T) {
 			buildStorage: func() storage.Storage {
 				st := storage.NewMemStorage()
 				gValue := 1.5
-				st.SetGauge("b<unsafe>", metrics.GaugeValue(&gValue))
+				st.SetGauge(context.Background(), "b<unsafe>", metrics.GaugeValue(&gValue))
 
 				cValue := int64(2)
-				st.AddCounter("a&hits", metrics.CounterValue(&cValue))
+				st.AddCounter(context.Background(), "a&hits", metrics.CounterValue(&cValue))
 				return st
 			},
 			wantStatus:      http.StatusOK,
