@@ -3,21 +3,48 @@ package main
 import (
 	"flag"
 
-	"github.com/Shigabutdinoff/metrics/internal/server"
-	"github.com/Shigabutdinoff/metrics/internal/storage"
+	"github.com/caarlos0/env/v11"
+	"github.com/shigabutdinoff/metrics/internal/server"
+	"github.com/shigabutdinoff/metrics/internal/storage"
+	"go.uber.org/zap"
 )
 
 var (
-	addr = flag.String("address", "localhost:8080", "HTTP server endpoint address")
+	address         = flag.String("address", server.DefaultAddress, "HTTP server endpoint address")
+	storeInterval   = flag.Int("i", server.DefaultStoreInterval, "Интервал времени в секундах")
+	fileStoragePath = flag.String("f", server.DefaultFileStoragePath, "Путь до файла")
+	restore         = flag.Bool("r", server.DefaultRestore, "Загружать ранее сохранённые значения")
 )
 
 func init() {
-	flag.StringVar(addr, "a", "localhost:8080", "HTTP server endpoint address (shorthand)")
+	flag.StringVar(address, "a", server.DefaultAddress, "HTTP server endpoint address (shorthand)")
+	flag.IntVar(storeInterval, "store-interval", server.DefaultStoreInterval, "Интервал времени в секундах")
+	flag.StringVar(fileStoragePath, "file-storage-path", server.DefaultFileStoragePath, "Путь до файла")
+	flag.BoolVar(restore, "restore", server.DefaultRestore, "Загружать ранее сохранённые значения")
 }
 
 func main() {
 	flag.Parse()
 
+	// создаём предустановленный регистратор zap
+	logger, err := zap.NewDevelopment()
+	if err != nil {
+		// вызываем панику, если ошибка
+		panic(err)
+	}
+	defer func() { _ = logger.Sync() }()
+
 	st := storage.NewMemStorage()
-	server.New(st, *addr)
+	s := server.New(st, logger)
+	s.Address = *address
+	s.StoreInterval = *storeInterval
+	s.FileStoragePath = *fileStoragePath
+	s.Restore = *restore
+
+	err = env.Parse(s)
+	if err != nil {
+		logger.Error("Не удалось распарить окружение", zap.Error(err))
+	}
+
+	s.Run()
 }

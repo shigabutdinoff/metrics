@@ -1,9 +1,10 @@
 package storage
 
 import (
+	"context"
 	"testing"
 
-	"github.com/Shigabutdinoff/metrics/internal/model/metrics"
+	"github.com/shigabutdinoff/metrics/internal/model/metrics"
 )
 
 func TestMemStorage_AddCounter(t *testing.T) {
@@ -12,10 +13,11 @@ func TestMemStorage_AddCounter(t *testing.T) {
 	first := int64(2)
 	second := int64(5)
 
-	ms.AddCounter("requests", &first)
-	ms.AddCounter("requests", &second)
+	ctx := context.Background()
+	ms.AddCounter(ctx, "requests", &first)
+	ms.AddCounter(ctx, "requests", &second)
 
-	got := ms.GetCounters()["requests"]
+	got := ms.GetCounters(ctx)["requests"]
 	if got == nil {
 		t.Fatal("counter requests is nil")
 	}
@@ -26,7 +28,7 @@ func TestMemStorage_AddCounter(t *testing.T) {
 
 func TestMemStorage_GetCounters(t *testing.T) {
 	ms := &MemStorage{}
-	got := ms.GetCounters()
+	got := ms.GetCounters(context.Background())
 
 	if got == nil {
 		t.Fatal("GetCounters() returned nil map")
@@ -38,7 +40,7 @@ func TestMemStorage_GetCounters(t *testing.T) {
 
 func TestMemStorage_GetGauges(t *testing.T) {
 	ms := &MemStorage{}
-	got := ms.GetGauges()
+	got := ms.GetGauges(context.Background())
 
 	if got == nil {
 		t.Fatal("GetGauges() returned nil map")
@@ -53,10 +55,11 @@ func TestMemStorage_SetGauge(t *testing.T) {
 
 	v1 := 1.5
 	v2 := 2.5
-	ms.SetGauge("alloc", metrics.GaugeValue(&v1))
-	ms.SetGauge("alloc", metrics.GaugeValue(&v2))
+	ctx := context.Background()
+	ms.SetGauge(ctx, "alloc", metrics.GaugeValue(&v1))
+	ms.SetGauge(ctx, "alloc", metrics.GaugeValue(&v2))
 
-	got := ms.GetGauges()["alloc"]
+	got := ms.GetGauges(ctx)["alloc"]
 	if got == nil {
 		t.Fatal("gauge alloc is nil")
 	}

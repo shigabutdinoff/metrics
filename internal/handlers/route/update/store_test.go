@@ -1,15 +1,16 @@
 package update
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
-	"github.com/Shigabutdinoff/metrics/internal/storage"
 	"github.com/go-chi/chi/v5"
+	"github.com/shigabutdinoff/metrics/internal/storage"
 )
 
-func TestStore(t *testing.T) {
+func TestStoreTextPlain(t *testing.T) {
 	tests := []struct {
 		name       string
 		typeValue  string
@@ -28,7 +29,7 @@ func TestStore(t *testing.T) {
 			wantBody:   "OK",
 			assert: func(t *testing.T, st *storage.MemStorage) {
 				t.Helper()
-				g := st.GetGauges()["alloc"]
+				g := st.GetGauges(context.Background())["alloc"]
 				if g == nil || *g != 12.5 {
 					t.Fatalf("gauge alloc = %v, want 12.5", g)
 				}
@@ -43,7 +44,7 @@ func TestStore(t *testing.T) {
 			wantBody:   "OK",
 			assert: func(t *testing.T, st *storage.MemStorage) {
 				t.Helper()
-				c := st.GetCounters()["requests"]
+				c := st.GetCounters(context.Background())["requests"]
 				if c == nil || *c != 7 {
 					t.Fatalf("counter requests = %v, want 7", c)
 				}
@@ -69,7 +70,7 @@ func TestStore(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			st := storage.NewMemStorage()
 			r := chi.NewRouter()
-			r.Post("/update/{type}/{name}/{value}", Store(st))
+			r.Post("/update/{type}/{name}/{value}", StoreTextPlain(st))
 
 			req := httptest.NewRequest(
 				http.MethodPost,

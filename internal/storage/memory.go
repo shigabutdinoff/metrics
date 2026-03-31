@@ -1,12 +1,17 @@
 package storage
 
-import "github.com/Shigabutdinoff/metrics/internal/model/metrics"
+import (
+	"context"
+	"sync"
+
+	"github.com/shigabutdinoff/metrics/internal/model/metrics"
+)
 
 type Storage interface {
-	SetGauge(name string, value metrics.GaugeValue)
-	AddCounter(name string, delta metrics.CounterValue)
-	GetGauges() Gauges
-	GetCounters() Counters
+	SetGauge(ctx context.Context, name string, value metrics.GaugeValue)
+	AddCounter(ctx context.Context, name string, delta metrics.CounterValue)
+	GetGauges(ctx context.Context) Gauges
+	GetCounters(ctx context.Context) Counters
 }
 
 type (
@@ -15,6 +20,7 @@ type (
 )
 
 type MemStorage struct {
+	mu       sync.RWMutex
 	gauges   Gauges
 	counters Counters
 }
@@ -26,14 +32,18 @@ func NewMemStorage() *MemStorage {
 	}
 }
 
-func (ms *MemStorage) SetGauge(name string, value metrics.GaugeValue) {
+func (ms *MemStorage) SetGauge(_ context.Context, name string, value metrics.GaugeValue) {
+	ms.mu.Lock()
+	defer ms.mu.Unlock()
 	if ms.gauges == nil {
 		ms.gauges = make(Gauges)
 	}
 	ms.gauges[name] = value
 }
 
-func (ms *MemStorage) AddCounter(name string, delta metrics.CounterValue) {
+func (ms *MemStorage) AddCounter(_ context.Context, name string, delta metrics.CounterValue) {
+	ms.mu.Lock()
+	defer ms.mu.Unlock()
 	if ms.counters == nil {
 		ms.counters = make(Counters)
 	}
@@ -48,16 +58,33 @@ func (ms *MemStorage) AddCounter(name string, delta metrics.CounterValue) {
 	*existing += *delta
 }
 
-func (ms *MemStorage) GetGauges() Gauges {
+func (ms *MemStorage) GetGauges(_ context.Context) Gauges {
+	ms.mu.RLock()
+	defer ms.mu.RUnlock()
 	if ms.gauges == nil {
 		return make(Gauges)
 	}
-	return ms.gauges
+	gauges := make(Gauges, len(ms.gauges))
+	for k, v := range ms.gauges {
+		gauges[k] = v
+	}
+	return gauges
 }
 
-func (ms *MemStorage) GetCounters() Counters {
+func (ms *MemStorage) GetCounters(_ context.Context) Counters {
+	ms.mu.RLock()
+	defer ms.mu.RUnlock()
 	if ms.counters == nil {
 		return make(Counters)
 	}
-	return ms.counters
+	counters := make(Counters, len(ms.counters))
+	for k, v := range ms.counters {
+		if v == nil {
+			counters[k] = nil
+			continue
+		}
+		vv := *v
+		counters[k] = &vv
+	}
+	return counters
 }

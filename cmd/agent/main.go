@@ -5,34 +5,62 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Shigabutdinoff/metrics/internal/agent"
-	"github.com/Shigabutdinoff/metrics/internal/storage"
+	"github.com/caarlos0/env/v11"
+	"github.com/shigabutdinoff/metrics/internal/agent"
+	config "github.com/shigabutdinoff/metrics/internal/config/agent"
+	"github.com/shigabutdinoff/metrics/internal/storage"
+	"go.uber.org/zap"
 )
 
 var (
-	serverAddress     = flag.String("address", "localhost:8080", "HTTP server endpoint address")
-	reportIntervalSec = flag.Int("report-interval", int(agent.DefaultReportInterval/time.Second), "report interval in seconds")
-	pollIntervalSec   = flag.Int("poll-interval", int(agent.DefaultPollInterval/time.Second), "poll interval in seconds")
+	address           = flag.String("address", string(config.DefaultAddress), "HTTP server endpoint address")
+	reportIntervalSec = flag.Int64("report-interval", int64(config.DefaultReportInterval), "report interval in seconds")
+	pollIntervalSec   = flag.Int64("poll-interval", int64(config.DefaultPollInterval), "poll interval in seconds")
 )
 
 func init() {
-	flag.StringVar(serverAddress, "a", "localhost:8080", "HTTP server endpoint address (shorthand)")
-	flag.IntVar(reportIntervalSec, "r", int(agent.DefaultReportInterval/time.Second), "report interval in seconds (shorthand)")
-	flag.IntVar(pollIntervalSec, "p", int(agent.DefaultPollInterval/time.Second), "poll interval in seconds (shorthand)")
+	flag.StringVar(address, "a", string(config.DefaultAddress), "HTTP server endpoint address (shorthand)")
+	flag.Int64Var(reportIntervalSec, "r", int64(config.DefaultReportInterval), "report interval in seconds (shorthand)")
+	flag.Int64Var(pollIntervalSec, "p", int64(config.DefaultPollInterval), "poll interval in seconds (shorthand)")
 }
 
 func main() {
 	flag.Parse()
 
+	// создаём предустановленный регистратор zap
+	logger, err := zap.NewDevelopment()
+	if err != nil {
+		// вызываем панику, если ошибка
+		panic(err)
+	}
+	defer logger.Sync()
+
 	st := storage.NewMemStorage()
 	a := agent.New(st)
-	a.ServerAddress = normalizeServerAddress(*serverAddress)
-	a.ReportInterval = time.Duration(*reportIntervalSec) * time.Second
-	a.PollInterval = time.Duration(*pollIntervalSec) * time.Second
+
+	if err = env.Parse(&a); err != nil {
+		logger.Error("Не удалось распарить окружение", zap.Error(err))
+	}
+
+	a.Address = config.Address(normalizeAddress(string(a.Address)))
+	a.PollInterval = time.Duration(a.PollIntervalInt64) * time.Second
+	a.ReportInterval = time.Duration(a.ReportIntervalInt64) * time.Second
+
+	flag.Visit(func(f *flag.Flag) {
+		switch f.Name {
+		case "address", "a":
+			a.Address = config.Address(normalizeAddress(*address))
+		case "report-interval", "r":
+			a.ReportInterval = time.Duration(*reportIntervalSec) * time.Second
+		case "poll-interval", "p":
+			a.PollInterval = time.Duration(*pollIntervalSec) * time.Second
+		}
+	})
+
 	a.Run()
 }
 
-func normalizeServerAddress(address string) string {
+func normalizeAddress(address string) string {
 	if strings.HasPrefix(address, "http://") || strings.HasPrefix(address, "https://") {
 		return address
 	}
