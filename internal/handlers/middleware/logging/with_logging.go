@@ -7,12 +7,6 @@ import (
 	"go.uber.org/zap"
 )
 
-type ResponseWriter interface {
-	Header() http.Header
-	Write([]byte) (int, error)
-	WriteHeader(statusCode int)
-}
-
 type (
 	// берём структуру для хранения сведений об ответе
 	responseData struct {

@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/go-resty/resty/v2"
+	config "github.com/shigabutdinoff/metrics/internal/config/agent"
 	"github.com/shigabutdinoff/metrics/internal/model/metrics"
 	"github.com/shigabutdinoff/metrics/internal/storage"
 )
@@ -80,7 +81,7 @@ func TestAgent_ReportMetrics(t *testing.T) {
 	a := &Agent{
 		Storage: st,
 		Client:  resty.NewWithClient(ts.Client()),
-		Address: Address(ts.URL),
+		Config:  config.Config{Address: config.Address(ts.URL)},
 	}
 
 	a.ReportMetrics()
@@ -183,8 +184,8 @@ func TestAgent_sendMetric(t *testing.T) {
 			defer ts.Close()
 
 			a := &Agent{
-				Client:  resty.NewWithClient(ts.Client()),
-				Address: Address(ts.URL),
+				Client: resty.NewWithClient(ts.Client()),
+				Config: config.Config{Address: config.Address(ts.URL)},
 			}
 
 			err := a.sendMetric(tt.mtype, tt.metricName, tt.value)

@@ -64,7 +64,11 @@ func (ms *MemStorage) GetGauges(_ context.Context) Gauges {
 	if ms.gauges == nil {
 		return make(Gauges)
 	}
-	return ms.gauges
+	gauges := make(Gauges, len(ms.gauges))
+	for k, v := range ms.gauges {
+		gauges[k] = v
+	}
+	return gauges
 }
 
 func (ms *MemStorage) GetCounters(_ context.Context) Counters {
@@ -73,5 +77,14 @@ func (ms *MemStorage) GetCounters(_ context.Context) Counters {
 	if ms.counters == nil {
 		return make(Counters)
 	}
-	return ms.counters
+	counters := make(Counters, len(ms.counters))
+	for k, v := range ms.counters {
+		if v == nil {
+			counters[k] = nil
+			continue
+		}
+		vv := *v
+		counters[k] = &vv
+	}
+	return counters
 }

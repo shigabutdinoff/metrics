@@ -7,20 +7,21 @@ import (
 
 	"github.com/caarlos0/env/v11"
 	"github.com/shigabutdinoff/metrics/internal/agent"
+	config "github.com/shigabutdinoff/metrics/internal/config/agent"
 	"github.com/shigabutdinoff/metrics/internal/storage"
 	"go.uber.org/zap"
 )
 
 var (
-	address           = flag.String("address", string(agent.DefaultAddress), "HTTP server endpoint address")
-	reportIntervalSec = flag.Int64("report-interval", int64(agent.DefaultReportInterval), "report interval in seconds")
-	pollIntervalSec   = flag.Int64("poll-interval", int64(agent.DefaultPollInterval), "poll interval in seconds")
+	address           = flag.String("address", string(config.DefaultAddress), "HTTP server endpoint address")
+	reportIntervalSec = flag.Int64("report-interval", int64(config.DefaultReportInterval), "report interval in seconds")
+	pollIntervalSec   = flag.Int64("poll-interval", int64(config.DefaultPollInterval), "poll interval in seconds")
 )
 
 func init() {
-	flag.StringVar(address, "a", string(agent.DefaultAddress), "HTTP server endpoint address (shorthand)")
-	flag.Int64Var(reportIntervalSec, "r", int64(agent.DefaultReportInterval), "report interval in seconds (shorthand)")
-	flag.Int64Var(pollIntervalSec, "p", int64(agent.DefaultPollInterval), "poll interval in seconds (shorthand)")
+	flag.StringVar(address, "a", string(config.DefaultAddress), "HTTP server endpoint address (shorthand)")
+	flag.Int64Var(reportIntervalSec, "r", int64(config.DefaultReportInterval), "report interval in seconds (shorthand)")
+	flag.Int64Var(pollIntervalSec, "p", int64(config.DefaultPollInterval), "poll interval in seconds (shorthand)")
 }
 
 func main() {
@@ -36,17 +37,25 @@ func main() {
 
 	st := storage.NewMemStorage()
 	a := agent.New(st)
-	a.Address = agent.Address(*address)
-	a.ReportInterval = time.Duration(*reportIntervalSec)
-	a.PollInterval = time.Duration(*pollIntervalSec)
 
-	err = env.Parse(&a)
-	a.Address = agent.Address(normalizeAddress(string(a.Address)))
-	a.PollInterval = time.Duration(a.PollIntervalInt64) * time.Second
-	a.ReportInterval = time.Duration(a.ReportIntervalInt64) * time.Second
-	if err != nil {
+	if err = env.Parse(&a); err != nil {
 		logger.Error("Не удалось распарить окружение", zap.Error(err))
 	}
+
+	a.Address = config.Address(normalizeAddress(string(a.Address)))
+	a.PollInterval = time.Duration(a.PollIntervalInt64) * time.Second
+	a.ReportInterval = time.Duration(a.ReportIntervalInt64) * time.Second
+
+	flag.Visit(func(f *flag.Flag) {
+		switch f.Name {
+		case "address", "a":
+			a.Address = config.Address(normalizeAddress(*address))
+		case "report-interval", "r":
+			a.ReportInterval = time.Duration(*reportIntervalSec) * time.Second
+		case "poll-interval", "p":
+			a.PollInterval = time.Duration(*pollIntervalSec) * time.Second
+		}
+	})
 
 	a.Run()
 }

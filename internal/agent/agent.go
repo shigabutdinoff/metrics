@@ -12,40 +12,29 @@ import (
 	"time"
 
 	"github.com/go-resty/resty/v2"
+	"github.com/shigabutdinoff/metrics/internal/config/agent"
 	"github.com/shigabutdinoff/metrics/internal/model/metrics"
 	"github.com/shigabutdinoff/metrics/internal/repository"
 	"github.com/shigabutdinoff/metrics/internal/storage"
 )
 
-type (
-	PollInterval   int64
-	ReportInterval int64
-	Address        string
-)
-
-const (
-	DefaultPollInterval   PollInterval   = 2
-	DefaultReportInterval ReportInterval = 10
-	DefaultAddress        Address        = "http://localhost:8080"
-)
-
 type Agent struct {
-	Storage             storage.Storage
-	Client              *resty.Client
-	PollInterval        time.Duration
-	ReportInterval      time.Duration
-	PollIntervalInt64   PollInterval   `env:"POLL_INTERVAL"`
-	ReportIntervalInt64 ReportInterval `env:"REPORT_INTERVAL"`
-	Address             Address        `env:"ADDRESS"`
+	Storage        storage.Storage
+	Client         *resty.Client
+	PollInterval   time.Duration
+	ReportInterval time.Duration
+	agent.Config
 }
 
 func New(st storage.Storage) Agent {
 	return Agent{
-		Storage:             st,
-		Client:              resty.New().SetTimeout(10 * time.Second),
-		PollIntervalInt64:   DefaultPollInterval,
-		ReportIntervalInt64: DefaultReportInterval,
-		Address:             DefaultAddress,
+		Storage: st,
+		Client:  resty.New().SetTimeout(10 * time.Second),
+		Config: agent.Config{
+			PollIntervalInt64:   agent.DefaultPollInterval,
+			ReportIntervalInt64: agent.DefaultReportInterval,
+			Address:             agent.DefaultAddress,
+		},
 	}
 }
 

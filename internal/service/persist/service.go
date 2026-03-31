@@ -39,18 +39,25 @@ func (s *Service) Save() error {
 		}
 	}
 
-	tmp := s.path + ".json"
-	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o644)
+	dir := filepath.Dir(s.path)
+	f, err := os.CreateTemp(dir, filepath.Base(s.path)+".tmp-*")
 	if err != nil {
 		return err
 	}
+	tmp := f.Name()
 	enc := json.NewEncoder(f)
 	enc.SetIndent("", "  ")
 	if err := enc.Encode(out); err != nil {
 		_ = f.Close()
+		_ = os.Remove(tmp)
 		return err
 	}
 	if err := f.Close(); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	if err := os.Chmod(tmp, 0o644); err != nil {
+		_ = os.Remove(tmp)
 		return err
 	}
 	return os.Rename(tmp, s.path)
