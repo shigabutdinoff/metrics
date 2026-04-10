@@ -12,7 +12,7 @@ import (
 	"github.com/shigabutdinoff/metrics/internal/handlers/route/metrics"
 	"github.com/shigabutdinoff/metrics/internal/handlers/route/update"
 	"github.com/shigabutdinoff/metrics/internal/handlers/route/value"
-	"github.com/shigabutdinoff/metrics/internal/service/persist"
+	"github.com/shigabutdinoff/metrics/internal/service/persistent"
 	"github.com/shigabutdinoff/metrics/internal/storage"
 	"go.uber.org/zap"
 )
@@ -75,7 +75,7 @@ func New(st storage.Storage, logger *zap.Logger) *Server {
 }
 
 func (s *Server) Run() {
-	ps := persist.New(s.Storage, s.FileStoragePath, s.Logger)
+	ps := persistent.New(s.Storage, s.FileStoragePath, s.Logger)
 
 	if s.Restore {
 		if err := ps.Load(); err != nil {
