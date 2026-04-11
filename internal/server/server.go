@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"database/sql"
 	"net/http"
 	"strings"
@@ -15,6 +16,7 @@ import (
 	"github.com/shigabutdinoff/metrics/internal/handlers/route/update"
 	"github.com/shigabutdinoff/metrics/internal/handlers/route/value"
 	"github.com/shigabutdinoff/metrics/internal/repository/database"
+	"github.com/shigabutdinoff/metrics/internal/service/mservice"
 	"github.com/shigabutdinoff/metrics/internal/service/persistent"
 	"github.com/shigabutdinoff/metrics/internal/storage"
 	"go.uber.org/zap"
@@ -23,9 +25,9 @@ import (
 const (
 	DefaultAddress         = "localhost:8080"
 	DefaultStoreInterval   = 300
-	DefaultFileStoragePath = "metrics.json"
+	DefaultFileStoragePath = ""
 	DefaultRestore         = true
-	DefaultDatabaseDSN     = "host=localhost user=bulat password=password dbname=metrics sslmode=disable"
+	DefaultDatabaseDSN     = ""
 )
 
 type Server struct {
@@ -86,33 +88,16 @@ func New(st storage.Storage, logger *zap.Logger) *Server {
 
 func (s *Server) Run() {
 	ps := persistent.New(s.Storage, s.FileStoragePath, s.Logger)
-
-	if s.Restore {
-		if err := ps.Load(); err != nil {
-			s.Logger.Warn("Не удалось восстановить метрики", zap.Error(err))
-		}
-	}
-
-	if s.StoreInterval <= 0 {
-		s.onChange = func() {
-			if err := ps.Save(); err != nil {
-				s.Logger.Warn("Не удалось сохранить метрики (sync)", zap.Error(err))
-			}
-		}
-	} else {
-		ticker := time.NewTicker(time.Duration(s.StoreInterval) * time.Second)
-		go func() {
-			for range ticker.C {
-				if err := ps.Save(); err != nil {
-					s.Logger.Warn("Не удалось сохранить метрики (tick)", zap.Error(err))
-				}
-			}
-		}()
-	}
-
 	db, err := database.Connection(s.DatabaseDSN)
+
 	if err != nil {
 		s.Logger.Warn("Не удалось открыть соединение с БД", zap.Error(err))
+
+		if s.Restore && s.FileStoragePath != "" {
+			if err := ps.Load(); err != nil {
+				s.Logger.Warn("Не удалось восстановить метрики", zap.Error(err))
+			}
+		}
 	} else {
 		defer func(db *sql.DB) {
 			err := db.Close()
@@ -122,6 +107,42 @@ func (s *Server) Run() {
 		}(s.Database)
 
 		s.Database = db
+	}
+
+	if s.StoreInterval <= 0 {
+		s.onChange = func() {
+			if s.Database != nil {
+				ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+				// не забываем освободить ресурс
+				defer cancel()
+				// обращаемся к БД
+				if err := mservice.Upsert(ctx, s.Database, s.Storage, s.Logger); err != nil {
+					s.Logger.Warn("Не удалось сохранить метрики в БД (sync)", zap.Error(err))
+				}
+			} else if s.FileStoragePath != "" {
+				if err := ps.Save(); err != nil {
+					s.Logger.Warn("Не удалось сохранить метрики в файл (sync)", zap.Error(err))
+				}
+			}
+		}
+	} else {
+		ticker := time.NewTicker(time.Duration(s.StoreInterval) * time.Second)
+		go func() {
+			defer ticker.Stop()
+			for range ticker.C {
+				if s.Database != nil {
+					ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+					if err := mservice.Upsert(ctx, s.Database, s.Storage, s.Logger); err != nil {
+						s.Logger.Warn("Не удалось сохранить метрики в БД (tick)", zap.Error(err))
+					}
+					cancel()
+				} else if s.FileStoragePath != "" {
+					if err := ps.Save(); err != nil {
+						s.Logger.Warn("Не удалось сохранить метрики в файл (tick)", zap.Error(err))
+					}
+				}
+			}
+		}()
 	}
 
 	err = http.ListenAndServe(s.Address, s.Router)
