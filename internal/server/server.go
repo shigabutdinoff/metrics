@@ -1,6 +1,7 @@
 package server
 
 import (
+	"database/sql"
 	"net/http"
 	"strings"
 	"time"
@@ -9,9 +10,11 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/shigabutdinoff/metrics/internal/handlers/middleware/compress"
 	"github.com/shigabutdinoff/metrics/internal/handlers/middleware/logging"
+	"github.com/shigabutdinoff/metrics/internal/handlers/route/healthcheck"
 	"github.com/shigabutdinoff/metrics/internal/handlers/route/metrics"
 	"github.com/shigabutdinoff/metrics/internal/handlers/route/update"
 	"github.com/shigabutdinoff/metrics/internal/handlers/route/value"
+	"github.com/shigabutdinoff/metrics/internal/repository/database"
 	"github.com/shigabutdinoff/metrics/internal/service/persistent"
 	"github.com/shigabutdinoff/metrics/internal/storage"
 	"go.uber.org/zap"
@@ -22,6 +25,7 @@ const (
 	DefaultStoreInterval   = 300
 	DefaultFileStoragePath = "metrics.json"
 	DefaultRestore         = true
+	DefaultDatabaseDSN     = "host=localhost user=bulat password=password dbname=metrics sslmode=disable"
 )
 
 type Server struct {
@@ -32,7 +36,9 @@ type Server struct {
 	StoreInterval   int    `env:"STORE_INTERVAL"`
 	FileStoragePath string `env:"FILE_STORAGE_PATH"`
 	Restore         bool   `env:"RESTORE"`
+	DatabaseDSN     string `env:"DATABASE_DSN"`
 	onChange        func()
+	Database        *sql.DB
 }
 
 func New(st storage.Storage, logger *zap.Logger) *Server {
@@ -43,6 +49,7 @@ func New(st storage.Storage, logger *zap.Logger) *Server {
 		StoreInterval:   DefaultStoreInterval,
 		FileStoragePath: DefaultFileStoragePath,
 		Restore:         DefaultRestore,
+		DatabaseDSN:     DefaultDatabaseDSN,
 	}
 
 	r := chi.NewRouter()
@@ -70,6 +77,9 @@ func New(st storage.Storage, logger *zap.Logger) *Server {
 		r.Post("/update/", update.StoreApplicationJSON(s.Storage))
 		r.Post("/value/", value.ShowApplicationJSON(s.Storage))
 	})
+	r.Get("/ping", healthcheck.Ping(func() *sql.DB {
+		return s.Database
+	}))
 	s.Router = r
 	return s
 }
@@ -100,7 +110,21 @@ func (s *Server) Run() {
 		}()
 	}
 
-	err := http.ListenAndServe(s.Address, s.Router)
+	db, err := database.Connection(s.DatabaseDSN)
+	if err != nil {
+		s.Logger.Warn("Не удалось открыть соединение с БД", zap.Error(err))
+	} else {
+		defer func(db *sql.DB) {
+			err := db.Close()
+			if err != nil {
+				panic(err)
+			}
+		}(s.Database)
+
+		s.Database = db
+	}
+
+	err = http.ListenAndServe(s.Address, s.Router)
 	if err != nil {
 		s.Logger.Fatal("Failed to start server", zap.Error(err))
 		panic(err)
