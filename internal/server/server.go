@@ -3,12 +3,16 @@ package server
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/golang-migrate/migrate/v4"
+	_ "github.com/golang-migrate/migrate/v4/database/postgres"
+	_ "github.com/golang-migrate/migrate/v4/source/file"
 	"github.com/shigabutdinoff/metrics/internal/handlers/middleware/compress"
 	"github.com/shigabutdinoff/metrics/internal/handlers/middleware/logging"
 	"github.com/shigabutdinoff/metrics/internal/handlers/route/healthcheck"
@@ -107,6 +111,21 @@ func (s *Server) Run() {
 		}(s.Database)
 
 		s.Database = db
+
+		m, mErr := migrate.New("file://migrations", s.DatabaseDSN)
+		if mErr != nil {
+			s.Logger.Warn("Не удалось инициализировать миграции", zap.Error(mErr))
+		} else {
+			if err := m.Up(); err != nil {
+				if !errors.Is(err, migrate.ErrNoChange) {
+					s.Logger.Warn("Ошибка применения миграций", zap.Error(err))
+				} else {
+					s.Logger.Info("Миграции: нет изменений")
+				}
+			} else {
+				s.Logger.Info("Миграции успешно применены")
+			}
+		}
 	}
 
 	if s.StoreInterval <= 0 {
