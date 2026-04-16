@@ -36,7 +36,7 @@ func main() {
 	defer logger.Sync()
 
 	st := storage.NewMemStorage()
-	a := agent.New(st)
+	a := agent.New(st, logger)
 
 	if err = env.Parse(&a); err != nil {
 		logger.Error("Не удалось распарить окружение", zap.Error(err))

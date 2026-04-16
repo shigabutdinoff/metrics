@@ -13,6 +13,7 @@ import (
 	config "github.com/shigabutdinoff/metrics/internal/config/agent"
 	"github.com/shigabutdinoff/metrics/internal/model/metrics"
 	"github.com/shigabutdinoff/metrics/internal/storage"
+	"go.uber.org/zap"
 )
 
 func TestAgent_CollectMetrics(t *testing.T) {
@@ -198,7 +199,14 @@ func TestAgent_sendMetric(t *testing.T) {
 
 func TestNew(t *testing.T) {
 	st := storage.NewMemStorage()
-	got := New(st)
+
+	logger, err := zap.NewDevelopment()
+	if err != nil {
+		panic(err)
+	}
+	defer logger.Sync()
+
+	got := New(st, logger)
 
 	if got.Storage != st {
 		t.Fatal("storage instance was not assigned")

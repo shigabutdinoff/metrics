@@ -18,6 +18,7 @@ import (
 	"github.com/shigabutdinoff/metrics/internal/handlers/route/healthcheck"
 	"github.com/shigabutdinoff/metrics/internal/handlers/route/metrics"
 	"github.com/shigabutdinoff/metrics/internal/handlers/route/update"
+	updatesRoute "github.com/shigabutdinoff/metrics/internal/handlers/route/updates"
 	"github.com/shigabutdinoff/metrics/internal/handlers/route/value"
 	"github.com/shigabutdinoff/metrics/internal/repository/database"
 	"github.com/shigabutdinoff/metrics/internal/service/mservice"
@@ -81,6 +82,7 @@ func New(st storage.Storage, logger *zap.Logger) *Server {
 		r.Use(middleware.AllowContentType("application/json"))
 		r.Use(compress.GzipMiddleware())
 		r.Post("/update/", update.StoreApplicationJSON(s.Storage))
+		r.Post("/updates/", updatesRoute.StoreApplicationJSONBatch(s.Storage))
 		r.Post("/value/", value.ShowApplicationJSON(s.Storage))
 	})
 	r.Get("/ping", healthcheck.Ping(func() *sql.DB {
