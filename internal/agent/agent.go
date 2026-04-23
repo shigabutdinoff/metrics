@@ -5,10 +5,13 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math/rand"
+	"net"
 	"net/http"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/go-resty/resty/v2"
@@ -139,6 +142,51 @@ func (a *Agent) ReportMetrics() {
 	}
 }
 
+func isRetriableNetErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	var ne net.Error
+	if errors.As(err, &ne) {
+		return ne.Timeout()
+	}
+
+	msg := strings.ToLower(err.Error())
+	switch {
+	case strings.Contains(msg, "connection refused"),
+		strings.Contains(msg, "connection reset"),
+		strings.Contains(msg, "no such host"),
+		strings.Contains(msg, "i/o timeout"),
+		strings.Contains(msg, "tls handshake timeout"),
+		strings.Contains(msg, "temporary failure"),
+		strings.Contains(msg, "timeout"):
+		return true
+	}
+	return false
+}
+
+func withRetry(fn func() error, shouldRetry func(error) bool, logger *zap.Logger) error {
+	delays := []time.Duration{1 * time.Second, 3 * time.Second, 5 * time.Second}
+	var err error
+
+	if err = fn(); err == nil {
+		return nil
+	}
+	for i, d := range delays {
+		if !shouldRetry(err) {
+			return err
+		}
+		if logger != nil {
+			logger.Info("Повторная отправка после ошибки", zap.Error(err), zap.Int("attempt", i+1), zap.Duration("sleep", d))
+		}
+		time.Sleep(d)
+		if err = fn(); err == nil {
+			return nil
+		}
+	}
+	return err
+}
+
 func (a *Agent) sendMetric(mtype metrics.Type, name string, value any) error {
 	requestBody := metrics.Metrics{
 		ID:    name,
@@ -178,12 +226,22 @@ func (a *Agent) sendMetric(mtype metrics.Type, name string, value any) error {
 	baseURL := a.Address
 	path := fmt.Sprintf("%s/update/", baseURL)
 
-	resp, err := a.Client.R().
-		SetHeader("Content-Type", "application/json").
-		SetHeader("Content-Encoding", "gzip").
-		SetHeader("Accept-Encoding", "gzip").
-		SetBody(compressedBody.Bytes()).
-		Post(path)
+	var resp *resty.Response
+	send := func() error {
+		r, err := a.Client.R().
+			SetHeader("Content-Type", "application/json").
+			SetHeader("Content-Encoding", "gzip").
+			SetHeader("Accept-Encoding", "gzip").
+			SetBody(compressedBody.Bytes()).
+			Post(path)
+		if err != nil {
+			return err
+		}
+		resp = r
+		return nil
+	}
+
+	err = withRetry(send, isRetriableNetErr, a.Logger)
 	if err != nil {
 		return err
 	}
@@ -213,13 +271,22 @@ func (a *Agent) sendBatch(items []metrics.Metrics) error {
 	baseURL := a.Address
 	path := fmt.Sprintf("%s/updates/", baseURL)
 
-	resp, err := a.Client.R().
-		SetHeader("Content-Type", "application/json").
-		SetHeader("Content-Encoding", "gzip").
-		SetHeader("Accept-Encoding", "gzip").
-		SetBody(compressedBody.Bytes()).
-		Post(path)
-	if err != nil {
+	var resp *resty.Response
+	send := func() error {
+		r, err := a.Client.R().
+			SetHeader("Content-Type", "application/json").
+			SetHeader("Content-Encoding", "gzip").
+			SetHeader("Accept-Encoding", "gzip").
+			SetBody(compressedBody.Bytes()).
+			Post(path)
+		if err != nil {
+			return err
+		}
+		resp = r
+		return nil
+	}
+
+	if err := withRetry(send, isRetriableNetErr, a.Logger); err != nil {
 		return err
 	}
 

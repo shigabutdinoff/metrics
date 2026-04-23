@@ -136,8 +136,8 @@ func (s *Server) Run() {
 				ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 				// не забываем освободить ресурс
 				defer cancel()
-				// обращаемся к БД
-				if err := mservice.Upsert(ctx, s.Database, s.Storage, s.Logger); err != nil {
+				op := func() error { return mservice.Upsert(ctx, s.Database, s.Storage, s.Logger) }
+				if err := withRetry(op, isRetriablePGError, s.Logger); err != nil {
 					s.Logger.Warn("Не удалось сохранить метрики в БД (sync)", zap.Error(err))
 				}
 			} else if s.FileStoragePath != "" {
@@ -153,7 +153,8 @@ func (s *Server) Run() {
 			for range ticker.C {
 				if s.Database != nil {
 					ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-					if err := mservice.Upsert(ctx, s.Database, s.Storage, s.Logger); err != nil {
+					op := func() error { return mservice.Upsert(ctx, s.Database, s.Storage, s.Logger) }
+					if err := withRetry(op, isRetriablePGError, s.Logger); err != nil {
 						s.Logger.Warn("Не удалось сохранить метрики в БД (tick)", zap.Error(err))
 					}
 					cancel()
@@ -171,4 +172,41 @@ func (s *Server) Run() {
 		s.Logger.Fatal("Failed to start server", zap.Error(err))
 		panic(err)
 	}
+}
+
+func isRetriablePGError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	msg := strings.ToUpper(err.Error())
+	if strings.Contains(msg, "SQLSTATE 08") {
+		return true
+	}
+
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		return true
+	}
+	return false
+}
+
+func withRetry(fn func() error, shouldRetry func(error) bool, logger *zap.Logger) error {
+	delays := []time.Duration{1 * time.Second, 3 * time.Second, 5 * time.Second}
+	var err error
+	if err = fn(); err == nil {
+		return nil
+	}
+	for i, d := range delays {
+		if !shouldRetry(err) {
+			return err
+		}
+		if logger != nil {
+			logger.Info("Повтор операции после ошибки", zap.Error(err), zap.Int("attempt", i+1), zap.Duration("sleep", d))
+		}
+		time.Sleep(d)
+		if err = fn(); err == nil {
+			return nil
+		}
+	}
+	return err
 }
