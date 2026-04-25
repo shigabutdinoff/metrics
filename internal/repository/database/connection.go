@@ -14,7 +14,7 @@ func Connection(ps string) (*sql.DB, error) {
 
 	db, err := sql.Open("pgx", ps)
 	if err != nil {
-		panic(err)
+		return nil, err
 	}
 
 	return db, nil

@@ -52,7 +52,7 @@ func TestAgent_ReportMetrics(t *testing.T) {
 	var contentTypes []string
 	var contentEncodings []string
 	var acceptedEncodings []string
-	var received []metrics.Metrics
+	var received [][]metrics.Metrics
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		methods = append(methods, r.Method)
 		contentTypes = append(contentTypes, r.Header.Get("Content-Type"))
@@ -70,11 +70,15 @@ func TestAgent_ReportMetrics(t *testing.T) {
 			t.Fatalf("io.ReadAll() error = %v", err)
 		}
 
-		var metric metrics.Metrics
-		if err := json.Unmarshal(body, &metric); err != nil {
+		if r.URL.Path != "/updates/" {
+			t.Fatalf("path = %q, want /updates/", r.URL.Path)
+		}
+
+		var metricsBatch []metrics.Metrics
+		if err := json.Unmarshal(body, &metricsBatch); err != nil {
 			t.Fatalf("json.Unmarshal() error = %v", err)
 		}
-		received = append(received, metric)
+		received = append(received, metricsBatch)
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer ts.Close()
@@ -87,8 +91,8 @@ func TestAgent_ReportMetrics(t *testing.T) {
 
 	a.ReportMetrics()
 
-	if len(received) != 2 {
-		t.Fatalf("requests count = %d, want 2", len(received))
+	if len(received) != 1 {
+		t.Fatalf("requests count = %d, want 1", len(received))
 	}
 	for _, method := range methods {
 		if method != http.MethodPost {
@@ -111,9 +115,13 @@ func TestAgent_ReportMetrics(t *testing.T) {
 		}
 	}
 
+	batch := received[0]
+	if len(batch) != 2 {
+		t.Fatalf("batch size = %d, want 2", len(batch))
+	}
 	gotGauge := false
 	gotCounter := false
-	for _, metric := range received {
+	for _, metric := range batch {
 		switch metric.ID {
 		case "Alloc":
 			gotGauge = metric.MType == metrics.Gauge && metric.Value != nil && *metric.Value == 12.5
@@ -133,76 +141,12 @@ func TestAgent_Run(t *testing.T) {
 	t.Skip("Run contains an infinite loop and requires integration-style cancellation")
 }
 
-func TestAgent_sendMetric(t *testing.T) {
-	tests := []struct {
-		name       string
-		statusCode int
-		mtype      metrics.Type
-		metricName string
-		value      any
-		wantErr    bool
-	}{
-		{
-			name:       "success gauge",
-			statusCode: http.StatusOK,
-			mtype:      metrics.Gauge,
-			metricName: "Alloc",
-			value:      metrics.GaugeValue(float64Ptr(3.5)),
-			wantErr:    false,
-		},
-		{
-			name:       "error on non-200",
-			statusCode: http.StatusInternalServerError,
-			mtype:      metrics.Counter,
-			metricName: "PollCount",
-			value:      metrics.CounterValue(int64Ptr(3)),
-			wantErr:    true,
-		},
-		{
-			name:       "error on invalid value",
-			statusCode: http.StatusOK,
-			mtype:      metrics.Gauge,
-			metricName: "Alloc",
-			value:      int64Ptr(2),
-			wantErr:    true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.URL.Path != "/update/" {
-					t.Fatalf("path = %q, want /update/", r.URL.Path)
-				}
-				if r.Header.Get("Content-Type") != "application/json" {
-					t.Fatalf("content type = %q, want application/json", r.Header.Get("Content-Type"))
-				}
-				if r.Header.Get("Content-Encoding") != "gzip" {
-					t.Fatalf("content encoding = %q, want gzip", r.Header.Get("Content-Encoding"))
-				}
-				w.WriteHeader(tt.statusCode)
-			}))
-			defer ts.Close()
-
-			a := &Agent{
-				Client: resty.NewWithClient(ts.Client()),
-				Config: config.Config{Address: config.Address(ts.URL)},
-			}
-
-			err := a.sendMetric(tt.mtype, tt.metricName, tt.value)
-			if (err != nil) != tt.wantErr {
-				t.Fatalf("sendMetric() error = %v, wantErr %v", err, tt.wantErr)
-			}
-		})
-	}
-}
-
 func TestNew(t *testing.T) {
 	st := storage.NewMemStorage()
 
 	logger, err := zap.NewDevelopment()
 	if err != nil {
-		panic(err)
+		t.Fatal(err)
 	}
 	defer logger.Sync()
 

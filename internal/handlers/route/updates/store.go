@@ -7,9 +7,10 @@ import (
 
 	"github.com/shigabutdinoff/metrics/internal/model/metrics"
 	"github.com/shigabutdinoff/metrics/internal/storage"
+	"go.uber.org/zap"
 )
 
-func StoreApplicationJSONBatch(st storage.Storage) http.HandlerFunc {
+func StoreApplicationJSONBatch(st storage.Storage, logger *zap.Logger) http.HandlerFunc {
 	return func(res http.ResponseWriter, req *http.Request) {
 		var items []metrics.Metrics
 
@@ -42,7 +43,10 @@ func StoreApplicationJSONBatch(st storage.Storage) http.HandlerFunc {
 
 		res.Header().Set("Content-Type", "application/json")
 		if err := json.NewEncoder(res).Encode(items); err != nil {
-			http.Error(res, err.Error(), http.StatusInternalServerError)
+			if logger != nil {
+				logger.Error("произошла ошибка шифрования", zap.Error(err))
+			}
+			http.Error(res, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 			return
 		}
 	}

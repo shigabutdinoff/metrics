@@ -82,7 +82,7 @@ func New(st storage.Storage, logger *zap.Logger) *Server {
 		r.Use(middleware.AllowContentType("application/json"))
 		r.Use(compress.GzipMiddleware())
 		r.Post("/update/", update.StoreApplicationJSON(s.Storage))
-		r.Post("/updates/", updatesRoute.StoreApplicationJSONBatch(s.Storage))
+		r.Post("/updates/", updatesRoute.StoreApplicationJSONBatch(s.Storage, s.Logger))
 		r.Post("/value/", value.ShowApplicationJSON(s.Storage))
 	})
 	r.Get("/ping", healthcheck.Ping(func() *sql.DB {
@@ -94,84 +94,105 @@ func New(st storage.Storage, logger *zap.Logger) *Server {
 
 func (s *Server) Run() {
 	ps := persistent.New(s.Storage, s.FileStoragePath, s.Logger)
-	db, err := database.Connection(s.DatabaseDSN)
+	if err := s.initDatabaseOrRestore(ps); err != nil {
+		s.Logger.Warn("Инициализация хранилищ завершилась с ошибкой", zap.Error(err))
+	}
 
-	if err != nil {
-		s.Logger.Warn("Не удалось открыть соединение с БД", zap.Error(err))
-
-		if s.Restore && s.FileStoragePath != "" {
-			if err := ps.Load(); err != nil {
-				s.Logger.Warn("Не удалось восстановить метрики", zap.Error(err))
-			}
-		}
-	} else {
+	if s.Database != nil {
 		defer func(db *sql.DB) {
-			err := db.Close()
-			if err != nil {
+			if err := db.Close(); err != nil {
 				panic(err)
 			}
 		}(s.Database)
-
-		s.Database = db
-
-		m, mErr := migrate.New("file://migrations", s.DatabaseDSN)
-		if mErr != nil {
-			s.Logger.Warn("Не удалось инициализировать миграции", zap.Error(mErr))
-		} else {
-			if err := m.Up(); err != nil {
-				if !errors.Is(err, migrate.ErrNoChange) {
-					s.Logger.Warn("Ошибка применения миграций", zap.Error(err))
-				} else {
-					s.Logger.Info("Миграции: нет изменений")
-				}
-			} else {
-				s.Logger.Info("Миграции успешно применены")
-			}
-		}
 	}
 
+	s.configurePersistence(ps)
+
+	if err := http.ListenAndServe(s.Address, s.Router); err != nil {
+		s.Logger.Fatal("Failed to start server", zap.Error(err))
+		panic(err)
+	}
+}
+
+func (s *Server) initDatabaseOrRestore(ps *persistent.Service) error {
+	db, err := database.Connection(s.DatabaseDSN)
+	if err != nil {
+		s.Logger.Warn("Не удалось открыть соединение с БД", zap.Error(err))
+		if s.Restore && s.FileStoragePath != "" {
+			if loadErr := ps.Load(); loadErr != nil {
+				s.Logger.Warn("Не удалось восстановить метрики", zap.Error(loadErr))
+				return errors.Join(err, loadErr)
+			}
+		}
+		return err
+	}
+
+	s.Database = db
+
+	m, mErr := migrate.New("file://migrations", s.DatabaseDSN)
+	if mErr != nil {
+		s.Logger.Warn("Не удалось инициализировать миграции", zap.Error(mErr))
+		return mErr
+	}
+
+	if upErr := m.Up(); upErr != nil {
+		if !errors.Is(upErr, migrate.ErrNoChange) {
+			s.Logger.Warn("Ошибка применения миграций", zap.Error(upErr))
+			return upErr
+		}
+		s.Logger.Info("Миграции: нет изменений")
+		return nil
+	}
+
+	s.Logger.Info("Миграции успешно применены")
+	return nil
+}
+
+func (s *Server) configurePersistence(ps *persistent.Service) {
 	if s.StoreInterval <= 0 {
 		s.onChange = func() {
 			if s.Database != nil {
 				ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-				// не забываем освободить ресурс
 				defer cancel()
-				op := func() error { return mservice.Upsert(ctx, s.Database, s.Storage, s.Logger) }
-				if err := withRetry(op, isRetriablePGError, s.Logger); err != nil {
+				if err := s.saveToDB(ctx); err != nil {
 					s.Logger.Warn("Не удалось сохранить метрики в БД (sync)", zap.Error(err))
 				}
 			} else if s.FileStoragePath != "" {
-				if err := ps.Save(); err != nil {
+				if err := s.saveToFile(ps); err != nil {
 					s.Logger.Warn("Не удалось сохранить метрики в файл (sync)", zap.Error(err))
 				}
 			}
 		}
-	} else {
-		ticker := time.NewTicker(time.Duration(s.StoreInterval) * time.Second)
-		go func() {
-			defer ticker.Stop()
-			for range ticker.C {
-				if s.Database != nil {
-					ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-					op := func() error { return mservice.Upsert(ctx, s.Database, s.Storage, s.Logger) }
-					if err := withRetry(op, isRetriablePGError, s.Logger); err != nil {
-						s.Logger.Warn("Не удалось сохранить метрики в БД (tick)", zap.Error(err))
-					}
-					cancel()
-				} else if s.FileStoragePath != "" {
-					if err := ps.Save(); err != nil {
-						s.Logger.Warn("Не удалось сохранить метрики в файл (tick)", zap.Error(err))
-					}
-				}
-			}
-		}()
+		return
 	}
 
-	err = http.ListenAndServe(s.Address, s.Router)
-	if err != nil {
-		s.Logger.Fatal("Failed to start server", zap.Error(err))
-		panic(err)
-	}
+	ticker := time.NewTicker(time.Duration(s.StoreInterval) * time.Second)
+	go func() {
+		defer ticker.Stop()
+		for range ticker.C {
+			if s.Database != nil {
+				ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+				if err := s.saveToDB(ctx); err != nil {
+					s.Logger.Warn("Не удалось сохранить метрики в БД (tick)", zap.Error(err))
+				}
+				cancel()
+			} else if s.FileStoragePath != "" {
+				if err := s.saveToFile(ps); err != nil {
+					s.Logger.Warn("Не удалось сохранить метрики в файл (tick)", zap.Error(err))
+				}
+			}
+		}
+	}()
+}
+
+func (s *Server) saveToDB(ctx context.Context) error {
+	repo := database.NewRepository(s.Database)
+	op := func() error { return mservice.Upsert(ctx, repo, s.Storage) }
+	return withRetry(op, isRetriablePGError, s.Logger)
+}
+
+func (s *Server) saveToFile(ps *persistent.Service) error {
+	return ps.Save()
 }
 
 func isRetriablePGError(err error) bool {
@@ -179,14 +200,22 @@ func isRetriablePGError(err error) bool {
 		return false
 	}
 
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		return true
+	}
+
 	msg := strings.ToUpper(err.Error())
 	if strings.Contains(msg, "SQLSTATE 08") {
 		return true
 	}
 
-	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+	if strings.Contains(msg, "SQLSTATE 40001") ||
+		strings.Contains(msg, "SQLSTATE 40P01") ||
+		strings.Contains(msg, "SQLSTATE 57P01") ||
+		strings.Contains(msg, "SQLSTATE 53300") {
 		return true
 	}
+
 	return false
 }
 
