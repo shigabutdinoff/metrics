@@ -3,6 +3,8 @@ package database
 import (
 	"context"
 	"database/sql"
+	"fmt"
+	"strings"
 
 	"github.com/shigabutdinoff/metrics/internal/repository"
 	"github.com/shigabutdinoff/metrics/internal/storage"
@@ -19,38 +21,35 @@ func NewRepository(db *sql.DB) *PGRepository {
 }
 
 func (r *PGRepository) BulkUpsert(ctx context.Context, gauges storage.Gauges, counters storage.Counters) error {
-	tx, err := r.db.BeginTx(ctx, &sql.TxOptions{})
-	if err != nil {
-		return err
+	total := len(gauges) + len(counters)
+	if total == 0 {
+		return nil
 	}
-	defer func() { _ = tx.Rollback() }()
 
-	stmt, err := tx.PrepareContext(ctx, `
-        INSERT INTO metrics (id, type, delta, value, hash)
-        VALUES ($1, $2, $3, $4, $5)
-        ON CONFLICT (id)
-        DO UPDATE SET type = EXCLUDED.type,
-                      delta = EXCLUDED.delta,
-                      value = EXCLUDED.value,
-                      hash  = EXCLUDED.hash`)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = stmt.Close() }()
+	const cols = 5
+	rows := make([]string, 0, total)
+	args := make([]any, 0, total*cols)
 
+	i := 1
 	for name, val := range gauges {
-		if _, err := stmt.ExecContext(ctx, name, "gauge", nil, (*float64)(val), nil); err != nil {
-			return err
-		}
+		rows = append(rows, fmt.Sprintf("($%d, $%d, $%d, $%d, $%d)", i, i+1, i+2, i+3, i+4))
+		args = append(args, name, "gauge", nil, (*float64)(val), nil)
+		i += cols
 	}
-
 	for name, delta := range counters {
-		if _, err := stmt.ExecContext(ctx, name, "counter", (*int64)(delta), nil, nil); err != nil {
-			return err
-		}
+		rows = append(rows, fmt.Sprintf("($%d, $%d, $%d, $%d, $%d)", i, i+1, i+2, i+3, i+4))
+		args = append(args, name, "counter", (*int64)(delta), nil, nil)
+		i += cols
 	}
 
-	if err := tx.Commit(); err != nil {
+	query := `INSERT INTO metrics (id, type, delta, value, hash) VALUES ` +
+		strings.Join(rows, ", ") +
+		` ON CONFLICT (id) DO UPDATE SET type  = EXCLUDED.type,
+		                                 delta = EXCLUDED.delta,
+		                                 value = EXCLUDED.value,
+		                                 hash  = EXCLUDED.hash`
+
+	if _, err := r.db.ExecContext(ctx, query, args...); err != nil {
 		return err
 	}
 	return nil

@@ -41,7 +41,7 @@ func newClient() *resty.Client {
 			return false
 		}
 		status := r.StatusCode()
-		return status >= 500 && status <= 599
+		return status == 429 || (status >= 500 && status <= 599)
 	})
 	return c
 }
