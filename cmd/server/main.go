@@ -14,6 +14,7 @@ var (
 	storeInterval   = flag.Int("i", server.DefaultStoreInterval, "Интервал времени в секундах")
 	fileStoragePath = flag.String("f", server.DefaultFileStoragePath, "Путь до файла")
 	restore         = flag.Bool("r", server.DefaultRestore, "Загружать ранее сохранённые значения")
+	databaseDsn     = flag.String("d", server.DefaultDatabaseDSN, "Адрес подключения к БД")
 )
 
 func init() {
@@ -21,6 +22,7 @@ func init() {
 	flag.IntVar(storeInterval, "store-interval", server.DefaultStoreInterval, "Интервал времени в секундах")
 	flag.StringVar(fileStoragePath, "file-storage-path", server.DefaultFileStoragePath, "Путь до файла")
 	flag.BoolVar(restore, "restore", server.DefaultRestore, "Загружать ранее сохранённые значения")
+	flag.StringVar(databaseDsn, "database-dsn", server.DefaultDatabaseDSN, "Адрес подключения к БД")
 }
 
 func main() {
@@ -40,6 +42,7 @@ func main() {
 	s.StoreInterval = *storeInterval
 	s.FileStoragePath = *fileStoragePath
 	s.Restore = *restore
+	s.DatabaseDSN = *databaseDsn
 
 	err = env.Parse(s)
 	if err != nil {

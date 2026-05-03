@@ -16,4 +16,5 @@ type Config struct {
 	PollIntervalInt64   PollInterval   `env:"POLL_INTERVAL"`
 	ReportIntervalInt64 ReportInterval `env:"REPORT_INTERVAL"`
 	Address             Address        `env:"ADDRESS"`
+	UseBatch            bool           `env:"USE_BATCH"`
 }
