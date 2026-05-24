@@ -4,6 +4,9 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"math/rand"
@@ -131,6 +134,13 @@ func (a *Agent) sendMetrics(ctx context.Context, items []metrics.Metrics) error 
 		return err
 	}
 
+	var hashHeader string
+	if a.Config.Key != "" {
+		mac := hmac.New(sha256.New, []byte(a.Config.Key))
+		mac.Write(body)
+		hashHeader = hex.EncodeToString(mac.Sum(nil))
+	}
+
 	var compressedBody bytes.Buffer
 	zw := gzip.NewWriter(&compressedBody)
 	if _, err := zw.Write(body); err != nil {
@@ -143,13 +153,18 @@ func (a *Agent) sendMetrics(ctx context.Context, items []metrics.Metrics) error 
 	baseURL := a.Address
 	path := fmt.Sprintf("%s/updates/", baseURL)
 
-	resp, err := a.Client.R().
+	req := a.Client.R().
 		SetContext(ctx).
 		SetHeader("Content-Type", "application/json").
 		SetHeader("Content-Encoding", "gzip").
 		SetHeader("Accept-Encoding", "gzip").
-		SetBody(compressedBody.Bytes()).
-		Post(path)
+		SetBody(compressedBody.Bytes())
+
+	if hashHeader != "" {
+		req.SetHeader("HashSHA256", hashHeader)
+	}
+
+	resp, err := req.Post(path)
 	if err != nil {
 		return err
 	}

@@ -3,6 +3,9 @@ package agent
 import (
 	"compress/gzip"
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -134,6 +137,70 @@ func TestAgent_ReportMetrics(t *testing.T) {
 	}
 	if !gotCounter {
 		t.Fatal("counter payload not received")
+	}
+}
+
+func TestAgent_SendMetrics_Hash(t *testing.T) {
+	tests := []struct {
+		name     string
+		key      string
+		wantHash bool
+	}{
+		{name: "ключ задан - заголовок HashSHA256 выставлен", key: "secret", wantHash: true},
+		{name: "ключ пуст - заголовок HashSHA256 отсутствует", key: "", wantHash: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var gotHeader string
+			var hashMatched bool
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				// агент шлёт gzip - распаковываем, чтобы проверить хэш несжатого тела
+				zr, err := gzip.NewReader(r.Body)
+				if err != nil {
+					t.Fatalf("gzip.NewReader() error = %v", err)
+				}
+				defer zr.Close()
+
+				body, err := io.ReadAll(zr)
+				if err != nil {
+					t.Fatalf("io.ReadAll() error = %v", err)
+				}
+
+				gotHeader = r.Header.Get("HashSHA256")
+				if tt.key != "" {
+					mac := hmac.New(sha256.New, []byte(tt.key))
+					mac.Write(body)
+					want := hex.EncodeToString(mac.Sum(nil))
+					hashMatched = hmac.Equal([]byte(gotHeader), []byte(want))
+				}
+				w.WriteHeader(http.StatusOK)
+			}))
+			defer ts.Close()
+
+			g := 1.5
+			a := &Agent{
+				Storage: storage.NewMemStorage(),
+				Client:  resty.NewWithClient(ts.Client()),
+				Config:  config.Config{Address: config.Address(ts.URL), Key: tt.key},
+			}
+
+			items := []metrics.Metrics{{ID: "cpu", MType: metrics.Gauge, Value: &g}}
+			if err := a.sendMetrics(context.Background(), items); err != nil {
+				t.Fatalf("sendMetrics() error = %v", err)
+			}
+
+			if tt.wantHash {
+				if gotHeader == "" {
+					t.Fatal("ожидался заголовок HashSHA256, но он отсутствует")
+				}
+				if !hashMatched {
+					t.Fatalf("HashSHA256 не совпал с хэшем несжатого тела: %q", gotHeader)
+				}
+			} else if gotHeader != "" {
+				t.Fatalf("заголовок HashSHA256 не ожидался, получен %q", gotHeader)
+			}
+		})
 	}
 }
 
