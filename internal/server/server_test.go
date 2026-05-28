@@ -30,23 +30,23 @@ func TestNew(t *testing.T) {
 	s := New(st, logger)
 
 	if s.Storage != st {
-		t.Fatalf("New() storage mismatch")
+		t.Fatalf("New() несоответствие хранилища")
 	}
 	if s.Address != DefaultAddress {
-		t.Fatalf("New() address = %q, want %q", s.Address, DefaultAddress)
+		t.Fatalf("New() адрес = %q, ожидается %q", s.Address, DefaultAddress)
 	}
 	if s.Router == nil {
-		t.Fatalf("New() router is nil")
+		t.Fatalf("New() роутер равен nil")
 	}
 
-	// Smoke-test routes and handlers.
+	// Smoke-test маршрутов и обработчиков.
 	t.Run("GET /", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/", nil)
 		rr := httptest.NewRecorder()
 		s.Router.ServeHTTP(rr, req)
 
 		if rr.Code != http.StatusOK {
-			t.Fatalf("GET / status = %d, want %d", rr.Code, http.StatusOK)
+			t.Fatalf("GET / статус = %d, ожидается %d", rr.Code, http.StatusOK)
 		}
 	})
 
@@ -57,12 +57,12 @@ func TestNew(t *testing.T) {
 		s.Router.ServeHTTP(rr, req)
 
 		if rr.Code != http.StatusOK {
-			t.Fatalf("POST /update/gauge status = %d, want %d", rr.Code, http.StatusOK)
+			t.Fatalf("POST /update/gauge статус = %d, ожидается %d", rr.Code, http.StatusOK)
 		}
 
 		val := st.GetGauges(context.Background())["temp"]
 		if val == nil || *val != 12.5 {
-			t.Fatalf("gauge temp not updated, got %v", val)
+			t.Fatalf("gauge temp не обновлён, получено %v", val)
 		}
 	})
 
@@ -72,16 +72,16 @@ func TestNew(t *testing.T) {
 		s.Router.ServeHTTP(rr, req)
 
 		if rr.Code != http.StatusOK {
-			t.Fatalf("GET /value/gauge status = %d, want %d", rr.Code, http.StatusOK)
+			t.Fatalf("GET /value/gauge статус = %d, ожидается %d", rr.Code, http.StatusOK)
 		}
 		if body := rr.Body.String(); body != "12.5" {
-			t.Fatalf("GET /value/gauge body = %q, want %q", body, "12.5")
+			t.Fatalf("GET /value/gauge тело = %q, ожидается %q", body, "12.5")
 		}
 	})
 }
 
 func TestServer_Run(t *testing.T) {
-	t.Run("panics on listen error", func(t *testing.T) {
+	t.Run("паникует при ошибке прослушивания", func(t *testing.T) {
 		s := &Server{
 			Storage: storage.NewMemStorage(),
 			Address: "bad",
@@ -90,7 +90,7 @@ func TestServer_Run(t *testing.T) {
 
 		defer func() {
 			if r := recover(); r == nil {
-				t.Fatalf("Run() did not panic on listen error")
+				t.Fatalf("Run() не вызвал панику при ошибке прослушивания")
 			}
 		}()
 

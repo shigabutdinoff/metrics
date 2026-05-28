@@ -35,7 +35,7 @@ func Index(st storage.Storage) http.HandlerFunc {
 
 		sort.Strings(rows)
 		if len(rows) == 0 {
-			rows = append(rows, "<li>No metrics yet</li>")
+			rows = append(rows, "<li>Пока нет метрик</li>")
 		}
 
 		res.Header().Set("Content-Type", "text/html; charset=utf-8")

@@ -63,7 +63,7 @@ func Middleware(key *string) func(http.Handler) http.Handler {
 				r.Body = http.MaxBytesReader(w, r.Body, maxBodySize)
 				body, err := io.ReadAll(r.Body)
 				if err != nil {
-					http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
+					http.Error(w, "тело запроса слишком велико", http.StatusRequestEntityTooLarge)
 					return
 				}
 				r.Body = io.NopCloser(bytes.NewReader(body))
@@ -74,7 +74,7 @@ func Middleware(key *string) func(http.Handler) http.Handler {
 					mac.Write(body)
 					wantHash := hex.EncodeToString(mac.Sum(nil))
 					if !hmac.Equal([]byte(gotHash), []byte(wantHash)) {
-						http.Error(w, "hash mismatch", http.StatusBadRequest)
+						http.Error(w, "несовпадение хэша", http.StatusBadRequest)
 						return
 					}
 				}

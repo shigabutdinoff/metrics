@@ -27,20 +27,20 @@ func TestAgent_CollectMetrics(t *testing.T) {
 
 	poll := st.GetCounters(context.Background())["PollCount"]
 	if poll == nil {
-		t.Fatal("PollCount counter not set")
+		t.Fatal("счётчик PollCount не установлен")
 	}
 	if *poll != 1 {
-		t.Fatalf("PollCount = %d, want 1", *poll)
+		t.Fatalf("PollCount = %d, ожидается 1", *poll)
 	}
 
 	randomValue := st.GetGauges(context.Background())["RandomValue"]
 	if randomValue == nil {
-		t.Fatal("RandomValue gauge not set")
+		t.Fatal("gauge RandomValue не установлен")
 	}
 
 	alloc := st.GetGauges(context.Background())["Alloc"]
 	if alloc == nil {
-		t.Fatal("Alloc gauge from runtime stats not set")
+		t.Fatal("Alloc gauge из runtime-статистики не установлен")
 	}
 }
 
@@ -74,12 +74,12 @@ func TestAgent_ReportMetrics(t *testing.T) {
 		}
 
 		if r.URL.Path != "/updates/" {
-			t.Fatalf("path = %q, want /updates/", r.URL.Path)
+			t.Fatalf("путь = %q, ожидается /updates/", r.URL.Path)
 		}
 
 		var metricsBatch []metrics.Metrics
 		if err := json.Unmarshal(body, &metricsBatch); err != nil {
-			t.Fatalf("json.Unmarshal() error = %v", err)
+			t.Fatalf("json.Unmarshal() ошибка = %v", err)
 		}
 		received = append(received, metricsBatch)
 		w.WriteHeader(http.StatusOK)
@@ -95,32 +95,32 @@ func TestAgent_ReportMetrics(t *testing.T) {
 	a.ReportMetrics()
 
 	if len(received) != 1 {
-		t.Fatalf("requests count = %d, want 1", len(received))
+		t.Fatalf("количество запросов = %d, ожидается 1", len(received))
 	}
 	for _, method := range methods {
 		if method != http.MethodPost {
-			t.Fatalf("method = %s, want %s", method, http.MethodPost)
+			t.Fatalf("метод = %s, ожидается %s", method, http.MethodPost)
 		}
 	}
 	for _, ct := range contentTypes {
 		if ct != "application/json" {
-			t.Fatalf("content type = %q, want application/json", ct)
+			t.Fatalf("content type = %q, ожидается application/json", ct)
 		}
 	}
 	for _, ce := range contentEncodings {
 		if ce != "gzip" {
-			t.Fatalf("content encoding = %q, want gzip", ce)
+			t.Fatalf("content encoding = %q, ожидается gzip", ce)
 		}
 	}
 	for _, ae := range acceptedEncodings {
 		if ae != "gzip" {
-			t.Fatalf("accept encoding = %q, want gzip", ae)
+			t.Fatalf("accept encoding = %q, ожидается gzip", ae)
 		}
 	}
 
 	batch := received[0]
 	if len(batch) != 2 {
-		t.Fatalf("batch size = %d, want 2", len(batch))
+		t.Fatalf("размер пакета = %d, ожидается 2", len(batch))
 	}
 	gotGauge := false
 	gotCounter := false
@@ -133,10 +133,10 @@ func TestAgent_ReportMetrics(t *testing.T) {
 		}
 	}
 	if !gotGauge {
-		t.Fatal("gauge payload not received")
+		t.Fatal("полезная нагрузка gauge не получена")
 	}
 	if !gotCounter {
-		t.Fatal("counter payload not received")
+		t.Fatal("полезная нагрузка counter не получена")
 	}
 }
 
@@ -158,13 +158,13 @@ func TestAgent_SendMetrics_Hash(t *testing.T) {
 				// агент шлёт gzip - распаковываем, чтобы проверить хэш несжатого тела
 				zr, err := gzip.NewReader(r.Body)
 				if err != nil {
-					t.Fatalf("gzip.NewReader() error = %v", err)
+					t.Fatalf("gzip.NewReader() ошибка = %v", err)
 				}
 				defer zr.Close()
 
 				body, err := io.ReadAll(zr)
 				if err != nil {
-					t.Fatalf("io.ReadAll() error = %v", err)
+					t.Fatalf("io.ReadAll() ошибка = %v", err)
 				}
 
 				gotHeader = r.Header.Get("HashSHA256")
@@ -187,7 +187,7 @@ func TestAgent_SendMetrics_Hash(t *testing.T) {
 
 			items := []metrics.Metrics{{ID: "cpu", MType: metrics.Gauge, Value: &g}}
 			if err := a.sendMetrics(context.Background(), items); err != nil {
-				t.Fatalf("sendMetrics() error = %v", err)
+				t.Fatalf("sendMetrics() ошибка = %v", err)
 			}
 
 			if tt.wantHash {
@@ -205,7 +205,7 @@ func TestAgent_SendMetrics_Hash(t *testing.T) {
 }
 
 func TestAgent_Run(t *testing.T) {
-	t.Skip("Run contains an infinite loop and requires integration-style cancellation")
+	t.Skip("Run содержит бесконечный цикл и требует отмены интеграционного теста")
 }
 
 func TestNew(t *testing.T) {
@@ -220,10 +220,10 @@ func TestNew(t *testing.T) {
 	got := New(st, logger)
 
 	if got.Storage != st {
-		t.Fatal("storage instance was not assigned")
+		t.Fatal("экземпляр хранилища не присвоен")
 	}
 	if got.Client == nil {
-		t.Fatal("client is nil")
+		t.Fatal("клиент равен nil")
 	}
 }
 
@@ -253,14 +253,14 @@ func Test_formatMetricValue(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name:    "unsupported type",
+			name:    "неподдерживаемый тип",
 			mtype:   "histogram",
 			key:     "x",
 			value:   int64Ptr(1),
 			wantErr: true,
 		},
 		{
-			name:    "invalid gauge",
+			name:    "неверный gauge",
 			mtype:   metrics.Gauge,
 			key:     "Alloc",
 			value:   int64Ptr(1),
@@ -272,10 +272,10 @@ func Test_formatMetricValue(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			got, err := formatMetricValue(tt.mtype, tt.key, tt.value)
 			if (err != nil) != tt.wantErr {
-				t.Fatalf("formatMetricValue() error = %v, wantErr %v", err, tt.wantErr)
+				t.Fatalf("formatMetricValue() ошибка = %v, wantErr %v", err, tt.wantErr)
 			}
 			if got != tt.want {
-				t.Fatalf("formatMetricValue() got = %q, want %q", got, tt.want)
+				t.Fatalf("formatMetricValue() получено = %q, ожидается %q", got, tt.want)
 			}
 		})
 	}

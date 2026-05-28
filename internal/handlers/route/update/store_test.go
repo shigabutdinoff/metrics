@@ -21,7 +21,7 @@ func TestStoreTextPlain(t *testing.T) {
 		assert     func(t *testing.T, st *storage.MemStorage)
 	}{
 		{
-			name:       "updates gauge",
+			name:       "обновляет gauge",
 			typeValue:  "gauge",
 			nameValue:  "alloc",
 			rawValue:   "12.5",
@@ -31,12 +31,12 @@ func TestStoreTextPlain(t *testing.T) {
 				t.Helper()
 				g := st.GetGauges(context.Background())["alloc"]
 				if g == nil || *g != 12.5 {
-					t.Fatalf("gauge alloc = %v, want 12.5", g)
+					t.Fatalf("gauge alloc = %v, ожидается 12.5", g)
 				}
 			},
 		},
 		{
-			name:       "updates counter",
+			name:       "обновляет counter",
 			typeValue:  "counter",
 			nameValue:  "requests",
 			rawValue:   "7",
@@ -46,19 +46,19 @@ func TestStoreTextPlain(t *testing.T) {
 				t.Helper()
 				c := st.GetCounters(context.Background())["requests"]
 				if c == nil || *c != 7 {
-					t.Fatalf("counter requests = %v, want 7", c)
+					t.Fatalf("counter requests = %v, ожидается 7", c)
 				}
 			},
 		},
 		{
-			name:       "returns bad request on unknown type",
+			name:       "возвращает bad request при неизвестном типе",
 			typeValue:  "histogram",
 			nameValue:  "x",
 			rawValue:   "1",
 			wantStatus: http.StatusBadRequest,
 		},
 		{
-			name:       "returns not found on empty name",
+			name:       "возвращает not found при пустом названии",
 			typeValue:  "gauge",
 			nameValue:  "%20",
 			rawValue:   "1",
@@ -82,10 +82,10 @@ func TestStoreTextPlain(t *testing.T) {
 			r.ServeHTTP(rr, req)
 
 			if rr.Code != tt.wantStatus {
-				t.Fatalf("status = %d, want %d", rr.Code, tt.wantStatus)
+				t.Fatalf("статус = %d, ожидается %d", rr.Code, tt.wantStatus)
 			}
 			if tt.wantBody != "" && rr.Body.String() != tt.wantBody {
-				t.Fatalf("body = %q, want %q", rr.Body.String(), tt.wantBody)
+				t.Fatalf("тело = %q, ожидается %q", rr.Body.String(), tt.wantBody)
 			}
 			if tt.assert != nil {
 				tt.assert(t, st)

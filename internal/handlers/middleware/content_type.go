@@ -12,7 +12,7 @@ func EnsureContentTypeIsTextPlain(next http.Handler) http.Handler {
 		// этот обработчик принимает только запросы, отправленные с заголовком Content-Type: text/plain
 		contentType := r.Header.Get("Content-Type")
 		if !strings.HasPrefix(contentType, "text/plain") {
-			http.Error(w, "Only text/plain Content-Type are allowed!", http.StatusUnsupportedMediaType)
+			http.Error(w, "Допустим только text/plain Content-Type !", http.StatusUnsupportedMediaType)
 			return
 		}
 		// замыкание: используем ServeHTTP следующего хендлера

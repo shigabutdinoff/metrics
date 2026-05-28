@@ -14,19 +14,19 @@ func TestEnsureContentTypeIsTextPlain(t *testing.T) {
 		wantCalled  bool
 	}{
 		{
-			name:        "accepts exact text/plain",
+			name:        "принимает точный text/plain",
 			contentType: "text/plain",
 			wantStatus:  http.StatusOK,
 			wantCalled:  true,
 		},
 		{
-			name:        "accepts text/plain with charset",
+			name:        "принимает text/plain с charset",
 			contentType: "text/plain; charset=utf-8",
 			wantStatus:  http.StatusOK,
 			wantCalled:  true,
 		},
 		{
-			name:        "rejects non text/plain",
+			name:        "отклоняет не text/plain",
 			contentType: "application/json",
 			wantStatus:  http.StatusUnsupportedMediaType,
 			wantCalled:  false,
@@ -49,10 +49,10 @@ func TestEnsureContentTypeIsTextPlain(t *testing.T) {
 			h.ServeHTTP(rr, req)
 
 			if rr.Code != tt.wantStatus {
-				t.Fatalf("status = %d, want %d", rr.Code, tt.wantStatus)
+				t.Fatalf("статус = %d, ожидается %d", rr.Code, tt.wantStatus)
 			}
 			if called != tt.wantCalled {
-				t.Fatalf("next called = %v, want %v", called, tt.wantCalled)
+				t.Fatalf("следующий вызван = %v, ожидается %v", called, tt.wantCalled)
 			}
 		})
 	}

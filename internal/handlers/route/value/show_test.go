@@ -23,7 +23,7 @@ func TestShow(t *testing.T) {
 		wantBody   string
 	}{
 		{
-			name:      "returns gauge value",
+			name:      "возвращает значение gauge",
 			typeValue: "gauge",
 			nameValue: "alloc",
 			prepare: func(st *storage.MemStorage) {
@@ -34,7 +34,7 @@ func TestShow(t *testing.T) {
 			wantBody:   "12.5",
 		},
 		{
-			name:      "returns counter value",
+			name:      "возвращает значение counter",
 			typeValue: "counter",
 			nameValue: "requests",
 			prepare: func(st *storage.MemStorage) {
@@ -45,19 +45,19 @@ func TestShow(t *testing.T) {
 			wantBody:   "7",
 		},
 		{
-			name:       "returns bad request on unknown type",
+			name:       "возвращает bad request при неизвестном типе",
 			typeValue:  "histogram",
 			nameValue:  "x",
 			wantStatus: http.StatusBadRequest,
 		},
 		{
-			name:       "returns not found on empty name",
+			name:       "возвращает not found при пустом названии",
 			typeValue:  "gauge",
 			nameValue:  "%20",
 			wantStatus: http.StatusNotFound,
 		},
 		{
-			name:       "returns not found for absent metric",
+			name:       "возвращает not found для отсутствующей метрики",
 			typeValue:  "counter",
 			nameValue:  "absent",
 			wantStatus: http.StatusNotFound,
@@ -80,10 +80,10 @@ func TestShow(t *testing.T) {
 			r.ServeHTTP(rr, req)
 
 			if rr.Code != tt.wantStatus {
-				t.Fatalf("status = %d, want %d", rr.Code, tt.wantStatus)
+				t.Fatalf("статус = %d, ожидается %d", rr.Code, tt.wantStatus)
 			}
 			if tt.wantBody != "" && rr.Body.String() != tt.wantBody {
-				t.Fatalf("body = %q, want %q", rr.Body.String(), tt.wantBody)
+				t.Fatalf("тело = %q, ожидается %q", rr.Body.String(), tt.wantBody)
 			}
 		})
 	}
@@ -98,7 +98,7 @@ func TestShowApplicationJSON(t *testing.T) {
 		wantResponse metrics.Metrics
 	}{
 		{
-			name: "returns gauge metric as json",
+			name: "возвращает метрику gauge в json",
 			prepare: func(st *storage.MemStorage) {
 				v := 12.5
 				st.SetGauge(context.Background(), "alloc", metrics.GaugeValue(&v))
@@ -115,7 +115,7 @@ func TestShowApplicationJSON(t *testing.T) {
 			},
 		},
 		{
-			name: "returns counter metric as json",
+			name: "возвращает метрику counter в json",
 			prepare: func(st *storage.MemStorage) {
 				v := int64(7)
 				st.AddCounter(context.Background(), "requests", metrics.CounterValue(&v))
@@ -132,7 +132,7 @@ func TestShowApplicationJSON(t *testing.T) {
 			},
 		},
 		{
-			name: "returns not found for absent metric",
+			name: "возвращает not found для отсутствующей метрики",
 			requestBody: metrics.Metrics{
 				ID:    "absent",
 				MType: metrics.Counter,
@@ -140,7 +140,7 @@ func TestShowApplicationJSON(t *testing.T) {
 			wantStatus: http.StatusNotFound,
 		},
 		{
-			name: "returns bad request on unknown type",
+			name: "возвращает bad request при неизвестном типе",
 			requestBody: metrics.Metrics{
 				ID:    "alloc",
 				MType: metrics.Type("histogram"),
@@ -158,7 +158,7 @@ func TestShowApplicationJSON(t *testing.T) {
 
 			body, err := json.Marshal(tt.requestBody)
 			if err != nil {
-				t.Fatalf("json.Marshal() error = %v", err)
+				t.Fatalf("json.Marshal() ошибка = %v", err)
 			}
 
 			req := httptest.NewRequest(http.MethodPost, "/value", bytes.NewReader(body))
@@ -168,7 +168,7 @@ func TestShowApplicationJSON(t *testing.T) {
 			ShowApplicationJSON(st).ServeHTTP(rr, req)
 
 			if rr.Code != tt.wantStatus {
-				t.Fatalf("status = %d, want %d", rr.Code, tt.wantStatus)
+				t.Fatalf("статус = %d, ожидается %d", rr.Code, tt.wantStatus)
 			}
 
 			if tt.wantStatus != http.StatusOK {
@@ -176,25 +176,25 @@ func TestShowApplicationJSON(t *testing.T) {
 			}
 
 			if got := rr.Header().Get("Content-Type"); got != "application/json" {
-				t.Fatalf("Content-Type = %q, want %q", got, "application/json")
+				t.Fatalf("Content-Type = %q, ожидается %q", got, "application/json")
 			}
 
 			var resp metrics.Metrics
 			if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
-				t.Fatalf("json.Decode() error = %v", err)
+				t.Fatalf("json.Decode() ошибка = %v", err)
 			}
 
 			if resp.ID != tt.wantResponse.ID {
-				t.Fatalf("ID = %q, want %q", resp.ID, tt.wantResponse.ID)
+				t.Fatalf("ID = %q, ожидается %q", resp.ID, tt.wantResponse.ID)
 			}
 			if resp.MType != tt.wantResponse.MType {
-				t.Fatalf("MType = %q, want %q", resp.MType, tt.wantResponse.MType)
+				t.Fatalf("MType = %q, ожидается %q", resp.MType, tt.wantResponse.MType)
 			}
 			if !equalFloat64Ptr(resp.Value, tt.wantResponse.Value) {
-				t.Fatalf("Value = %v, want %v", resp.Value, tt.wantResponse.Value)
+				t.Fatalf("Value = %v, ожидается %v", resp.Value, tt.wantResponse.Value)
 			}
 			if !equalInt64Ptr(resp.Delta, tt.wantResponse.Delta) {
-				t.Fatalf("Delta = %v, want %v", resp.Delta, tt.wantResponse.Delta)
+				t.Fatalf("Delta = %v, ожидается %v", resp.Delta, tt.wantResponse.Delta)
 			}
 		})
 	}

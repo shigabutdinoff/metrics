@@ -19,10 +19,10 @@ func TestMemStorage_AddCounter(t *testing.T) {
 
 	got := ms.GetCounters(ctx)["requests"]
 	if got == nil {
-		t.Fatal("counter requests is nil")
+		t.Fatal("counter requests равен nil")
 	}
 	if *got != 7 {
-		t.Fatalf("counter requests = %d, want %d", *got, 7)
+		t.Fatalf("counter requests = %d, ожидается %d", *got, 7)
 	}
 }
 
@@ -31,10 +31,10 @@ func TestMemStorage_GetCounters(t *testing.T) {
 	got := ms.GetCounters(context.Background())
 
 	if got == nil {
-		t.Fatal("GetCounters() returned nil map")
+		t.Fatal("GetCounters() вернул nil map")
 	}
 	if len(got) != 0 {
-		t.Fatalf("len(GetCounters()) = %d, want 0", len(got))
+		t.Fatalf("len(GetCounters()) = %d, ожидается 0", len(got))
 	}
 }
 
@@ -43,10 +43,10 @@ func TestMemStorage_GetGauges(t *testing.T) {
 	got := ms.GetGauges(context.Background())
 
 	if got == nil {
-		t.Fatal("GetGauges() returned nil map")
+		t.Fatal("GetGauges() вернул nil map")
 	}
 	if len(got) != 0 {
-		t.Fatalf("len(GetGauges()) = %d, want 0", len(got))
+		t.Fatalf("len(GetGauges()) = %d, ожидается 0", len(got))
 	}
 }
 
@@ -61,25 +61,25 @@ func TestMemStorage_SetGauge(t *testing.T) {
 
 	got := ms.GetGauges(ctx)["alloc"]
 	if got == nil {
-		t.Fatal("gauge alloc is nil")
+		t.Fatal("gauge alloc равен nil")
 	}
 	if *got != 2.5 {
-		t.Fatalf("gauge alloc = %f, want %f", *got, 2.5)
+		t.Fatalf("gauge alloc = %f, ожидается %f", *got, 2.5)
 	}
 }
 
 func TestNewMemStorage(t *testing.T) {
 	got := NewMemStorage()
 	if got == nil {
-		t.Fatal("NewMemStorage() returned nil")
+		t.Fatal("NewMemStorage() вернул nil")
 	}
 	if got.gauges == nil {
-		t.Fatal("gauges map is nil")
+		t.Fatal("gauges map равна nil")
 	}
 	if got.counters == nil {
-		t.Fatal("counters map is nil")
+		t.Fatal("counters map равна nil")
 	}
 	if len(got.gauges) != 0 || len(got.counters) != 0 {
-		t.Fatalf("unexpected non-empty maps: gauges=%d counters=%d", len(got.gauges), len(got.counters))
+		t.Fatalf("неожиданно непустые maps: gauges=%d counters=%d", len(got.gauges), len(got.counters))
 	}
 }

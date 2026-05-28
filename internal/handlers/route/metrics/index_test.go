@@ -52,16 +52,16 @@ func TestIndex(t *testing.T) {
 		wantBody        string
 	}{
 		{
-			name: "returns placeholder when storage is empty",
+			name: "возвращает заглушку при пустом хранилище",
 			buildStorage: func() storage.Storage {
 				return storage.NewMemStorage()
 			},
 			wantStatus:      http.StatusOK,
 			wantContentType: "text/html; charset=utf-8",
-			wantBody:        "<html><body><ul><li>No metrics yet</li></ul></body></html>",
+			wantBody:        "<html><body><ul><li>Пока нет метрик</li></ul></body></html>",
 		},
 		{
-			name: "returns sorted and escaped metrics",
+			name: "возвращает отсортированные и экранированные метрики",
 			buildStorage: func() storage.Storage {
 				st := storage.NewMemStorage()
 				gValue := 1.5
@@ -79,7 +79,7 @@ func TestIndex(t *testing.T) {
 				"</ul></body></html>",
 		},
 		{
-			name: "skips nil metric values",
+			name: "пропускает nil-значения метрик",
 			buildStorage: func() storage.Storage {
 				return &stubStorage{
 					gauges: storage.Gauges{
@@ -92,7 +92,7 @@ func TestIndex(t *testing.T) {
 			},
 			wantStatus:      http.StatusOK,
 			wantContentType: "text/html; charset=utf-8",
-			wantBody:        "<html><body><ul><li>No metrics yet</li></ul></body></html>",
+			wantBody:        "<html><body><ul><li>Пока нет метрик</li></ul></body></html>",
 		},
 	}
 
@@ -107,13 +107,13 @@ func TestIndex(t *testing.T) {
 			handler.ServeHTTP(rr, req)
 
 			if rr.Code != tt.wantStatus {
-				t.Fatalf("status = %d, want %d", rr.Code, tt.wantStatus)
+				t.Fatalf("статус = %d, ожидается %d", rr.Code, tt.wantStatus)
 			}
 			if got := rr.Header().Get("Content-Type"); got != tt.wantContentType {
-				t.Fatalf("content-type = %q, want %q", got, tt.wantContentType)
+				t.Fatalf("content-type = %q, ожидается %q", got, tt.wantContentType)
 			}
 			if rr.Body.String() != tt.wantBody {
-				t.Fatalf("body = %q, want %q", rr.Body.String(), tt.wantBody)
+				t.Fatalf("тело = %q, ожидается %q", rr.Body.String(), tt.wantBody)
 			}
 		})
 	}

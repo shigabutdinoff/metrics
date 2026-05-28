@@ -20,7 +20,7 @@ func (u *Update) Validate() (int, error) {
 	rawName := chi.URLParam(u.Request, "name")
 	name, err := url.PathUnescape(rawName)
 	if err != nil || strings.TrimSpace(name) == "" {
-		return http.StatusNotFound, fmt.Errorf("invalid metric name: %w", err)
+		return http.StatusNotFound, fmt.Errorf("неверное название метрики: %w", err)
 	}
 	u.ID = name
 	u.MType = metrics.Type(chi.URLParam(u.Request, "type"))
@@ -30,17 +30,17 @@ func (u *Update) Validate() (int, error) {
 	case metrics.Counter:
 		v, err := strconv.ParseInt(value, 10, 64)
 		if err != nil {
-			return http.StatusBadRequest, fmt.Errorf("value must be an int64: %w", err)
+			return http.StatusBadRequest, fmt.Errorf("значение должно быть int64: %w", err)
 		}
 		u.Delta = &v
 	case metrics.Gauge:
 		v, err := strconv.ParseFloat(value, 64)
 		if err != nil {
-			return http.StatusBadRequest, fmt.Errorf("value must be an float64: %w", err)
+			return http.StatusBadRequest, fmt.Errorf("значение должно быть float64: %w", err)
 		}
 		u.Value = &v
 	default:
-		return http.StatusBadRequest, fmt.Errorf("invalid metric type")
+		return http.StatusBadRequest, fmt.Errorf("неверный тип метрики")
 	}
 
 	return http.StatusOK, nil
