@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"go.uber.org/zap"
 )
 
 func computeHMAC(key, data []byte) string {
@@ -89,8 +91,7 @@ func TestMiddleware_Request(t *testing.T) {
 				w.WriteHeader(http.StatusOK)
 			})
 
-			k := tt.key
-			h := Middleware(&k)(next)
+			h := Middleware(tt.key, zap.NewNop())(next)
 
 			var reqBody io.Reader
 			if tt.body != nil {
@@ -98,7 +99,7 @@ func TestMiddleware_Request(t *testing.T) {
 			}
 			req := httptest.NewRequest(http.MethodPost, "/updates/", reqBody)
 			if tt.hashHeader != "" {
-				req.Header.Set(Header, tt.hashHeader)
+				req.Header.Set(header, tt.hashHeader)
 			}
 			rr := httptest.NewRecorder()
 
@@ -147,15 +148,14 @@ func TestMiddleware_Response(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			k := tt.key
-			h := Middleware(&k)(handlerEcho(tt.responseBody, http.StatusOK))
+			h := Middleware(tt.key, zap.NewNop())(handlerEcho(tt.responseBody, http.StatusOK))
 
 			req := httptest.NewRequest(http.MethodGet, "/", nil)
 			rr := httptest.NewRecorder()
 
 			h.ServeHTTP(rr, req)
 
-			gotHash := rr.Header().Get(Header)
+			gotHash := rr.Header().Get(header)
 			if gotHash != tt.wantHash {
 				t.Fatalf("HashSHA256 = %q, ожидается %q", gotHash, tt.wantHash)
 			}
@@ -174,11 +174,10 @@ func TestMiddleware_BodyAvailableAfterCheck(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	k := key
-	h := Middleware(&k)(next)
+	h := Middleware(key, zap.NewNop())(next)
 
 	req := httptest.NewRequest(http.MethodPost, "/updates/", bytes.NewReader(body))
-	req.Header.Set(Header, correctHash)
+	req.Header.Set(header, correctHash)
 	rr := httptest.NewRecorder()
 
 	h.ServeHTTP(rr, req)

@@ -7,9 +7,11 @@ import (
 	"encoding/hex"
 	"io"
 	"net/http"
+
+	"go.uber.org/zap"
 )
 
-const Header = "HashSHA256"
+const header = "HashSHA256"
 
 // maxBodySize 10 МБ
 const maxBodySize = 10 << 20
@@ -36,28 +38,28 @@ func (rw *responseWriter) Unwrap() http.ResponseWriter {
 	return rw.ResponseWriter
 }
 
-func (rw *responseWriter) flush() {
+func (rw *responseWriter) flush() error {
 	if rw.statusCode == 0 {
 		rw.statusCode = http.StatusOK
 	}
 	data := rw.buf.Bytes()
 	mac := hmac.New(sha256.New, rw.key)
 	mac.Write(data)
-	rw.ResponseWriter.Header().Set(Header, hex.EncodeToString(mac.Sum(nil)))
+	rw.ResponseWriter.Header().Set(header, hex.EncodeToString(mac.Sum(nil)))
 	rw.ResponseWriter.WriteHeader(rw.statusCode)
-	_, _ = rw.ResponseWriter.Write(data)
+	_, err := rw.ResponseWriter.Write(data)
+	return err
 }
 
 // Middleware проверяет HashSHA256 входящих запросов и подписывает исходящие ответы.
-func Middleware(key *string) func(http.Handler) http.Handler {
+func Middleware(key string, logger *zap.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			k := *key
-			if k == "" {
+			if key == "" {
 				next.ServeHTTP(w, r)
 				return
 			}
-			keyBytes := []byte(k)
+			keyBytes := []byte(key)
 
 			if r.Body != nil && r.Body != http.NoBody {
 				r.Body = http.MaxBytesReader(w, r.Body, maxBodySize)
@@ -68,7 +70,7 @@ func Middleware(key *string) func(http.Handler) http.Handler {
 				}
 				r.Body = io.NopCloser(bytes.NewReader(body))
 
-				gotHash := r.Header.Get(Header)
+				gotHash := r.Header.Get(header)
 				if gotHash != "" {
 					mac := hmac.New(sha256.New, keyBytes)
 					mac.Write(body)
@@ -82,7 +84,9 @@ func Middleware(key *string) func(http.Handler) http.Handler {
 
 			rw := &responseWriter{ResponseWriter: w, key: keyBytes}
 			next.ServeHTTP(rw, r)
-			rw.flush()
+			if err := rw.flush(); err != nil {
+				logger.Error("Ошибка записи тела ответа", zap.Error(err))
+			}
 		})
 	}
 }

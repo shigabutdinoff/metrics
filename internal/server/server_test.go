@@ -28,6 +28,7 @@ func TestNew(t *testing.T) {
 	defer logger.Sync()
 
 	s := New(st, logger)
+	s.setupRoutes()
 
 	if s.Storage != st {
 		t.Fatalf("New() несоответствие хранилища")
@@ -36,7 +37,7 @@ func TestNew(t *testing.T) {
 		t.Fatalf("New() адрес = %q, ожидается %q", s.Address, DefaultAddress)
 	}
 	if s.Router == nil {
-		t.Fatalf("New() роутер равен nil")
+		t.Fatalf("setupRoutes() роутер равен nil")
 	}
 
 	// Smoke-test маршрутов и обработчиков.

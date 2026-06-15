@@ -63,8 +63,13 @@ func New(st storage.Storage, logger *zap.Logger) *Server {
 		Key:             DefaultKey,
 	}
 
+	return s
+}
+
+// setupRoutes собирает HTTP-роутер
+func (s *Server) setupRoutes() {
 	r := chi.NewRouter()
-	r.Use(logging.WithLogging(logger))
+	r.Use(logging.WithLogging(s.Logger))
 	r.Use(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 			next.ServeHTTP(w, req)
@@ -78,7 +83,7 @@ func New(st storage.Storage, logger *zap.Logger) *Server {
 	r.Group(func(r chi.Router) {
 		r.Use(middleware.AllowContentType("text/plain"))
 		r.Use(compress.GzipMiddleware())
-		r.Use(hash.Middleware(&s.Key))
+		r.Use(hash.Middleware(s.Key, s.Logger))
 		r.Get("/", metrics.Index(s.Storage))
 		r.Post("/update/{type}/{name}/{value}", update.StoreTextPlain(s.Storage))
 		r.Get("/value/{type}/{name}", value.ShowTextPlain(s.Storage))
@@ -86,7 +91,7 @@ func New(st storage.Storage, logger *zap.Logger) *Server {
 	r.Group(func(r chi.Router) {
 		r.Use(middleware.AllowContentType("application/json"))
 		r.Use(compress.GzipMiddleware())
-		r.Use(hash.Middleware(&s.Key))
+		r.Use(hash.Middleware(s.Key, s.Logger))
 		r.Post("/update/", update.StoreApplicationJSON(s.Storage))
 		r.Post("/updates/", updatesRoute.StoreApplicationJSONBatch(s.Storage, s.Logger))
 		r.Post("/value/", value.ShowApplicationJSON(s.Storage))
@@ -95,10 +100,11 @@ func New(st storage.Storage, logger *zap.Logger) *Server {
 		return s.Database
 	}))
 	s.Router = r
-	return s
 }
 
 func (s *Server) Run() {
+	s.setupRoutes()
+
 	ps := persistent.New(s.Storage, s.FileStoragePath, s.Logger)
 	if err := s.initDatabaseOrRestore(ps); err != nil {
 		s.Logger.Warn("Инициализация хранилищ завершилась с ошибкой", zap.Error(err))

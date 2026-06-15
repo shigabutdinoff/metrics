@@ -29,7 +29,7 @@ func TestAgent_CollectMetrics(t *testing.T) {
 
 	a.CollectMetrics()
 
-	poll := st.GetCounters(context.Background())["PollCount"]
+	poll := st.GetCounters(t.Context())["PollCount"]
 	if poll == nil {
 		t.Fatal("счётчик PollCount не установлен")
 	}
@@ -37,12 +37,12 @@ func TestAgent_CollectMetrics(t *testing.T) {
 		t.Fatalf("PollCount = %d, ожидается 1", *poll)
 	}
 
-	randomValue := st.GetGauges(context.Background())["RandomValue"]
+	randomValue := st.GetGauges(t.Context())["RandomValue"]
 	if randomValue == nil {
 		t.Fatal("gauge RandomValue не установлен")
 	}
 
-	alloc := st.GetGauges(context.Background())["Alloc"]
+	alloc := st.GetGauges(t.Context())["Alloc"]
 	if alloc == nil {
 		t.Fatal("Alloc gauge из runtime-статистики не установлен")
 	}
@@ -66,13 +66,15 @@ func TestAgent_SendMetrics_Hash(t *testing.T) {
 				// агент шлёт gzip - распаковываем, чтобы проверить хэш несжатого тела
 				zr, err := gzip.NewReader(r.Body)
 				if err != nil {
-					t.Fatalf("gzip.NewReader() ошибка = %v", err)
+					t.Errorf("gzip.NewReader() ошибка = %v", err)
+					return
 				}
 				defer zr.Close()
 
 				body, err := io.ReadAll(zr)
 				if err != nil {
-					t.Fatalf("io.ReadAll() ошибка = %v", err)
+					t.Errorf("io.ReadAll() ошибка = %v", err)
+					return
 				}
 
 				gotHeader = r.Header.Get("HashSHA256")
@@ -94,7 +96,7 @@ func TestAgent_SendMetrics_Hash(t *testing.T) {
 			}
 
 			items := []metrics.Metrics{{ID: "cpu", MType: metrics.Gauge, Value: &g}}
-			if err := a.sendMetrics(context.Background(), items); err != nil {
+			if err := a.sendMetrics(t.Context(), items); err != nil {
 				t.Fatalf("sendMetrics() ошибка = %v", err)
 			}
 
@@ -129,7 +131,7 @@ func TestAgent_Run(t *testing.T) {
 		Logger:         zap.NewNop(),
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	ctx, cancel := context.WithTimeout(t.Context(), 300*time.Millisecond)
 	defer cancel()
 
 	done := make(chan struct{})
@@ -153,9 +155,9 @@ func TestAgent_CollectGopsutilMetrics(t *testing.T) {
 	st := storage.NewMemStorage()
 	a := &Agent{Storage: st, Logger: zap.NewNop()}
 
-	a.collectGopsutil(context.Background())
+	a.collectGopsutil(t.Context())
 
-	gauges := st.GetGauges(context.Background())
+	gauges := st.GetGauges(t.Context())
 
 	if gauges["TotalMemory"] == nil {
 		t.Fatal("gauge TotalMemory не установлен")
@@ -199,7 +201,7 @@ func TestAgent_RateLimit(t *testing.T) {
 	st := storage.NewMemStorage()
 	for i := 0; i < 30; i++ {
 		v := float64(i)
-		st.SetGauge(context.Background(), fmt.Sprintf("g%d", i), &v)
+		st.SetGauge(t.Context(), fmt.Sprintf("g%d", i), &v)
 	}
 
 	a := &Agent{
@@ -211,7 +213,7 @@ func TestAgent_RateLimit(t *testing.T) {
 		Logger:         zap.NewNop(),
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	ctx, cancel := context.WithTimeout(t.Context(), 300*time.Millisecond)
 	defer cancel()
 	_ = a.Run(ctx)
 

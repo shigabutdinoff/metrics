@@ -12,7 +12,6 @@ import (
 	"math/rand"
 	"net/http"
 	"runtime"
-	"sync"
 	"time"
 
 	"github.com/go-resty/resty/v2"
@@ -21,6 +20,7 @@ import (
 	"github.com/shigabutdinoff/metrics/internal/repository"
 	"github.com/shigabutdinoff/metrics/internal/storage"
 	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
 )
 
 type Agent struct {
@@ -75,42 +75,37 @@ func (a *Agent) workerCount() int {
 // Run запускает агент
 func (a *Agent) Run(ctx context.Context) error {
 	workers := a.workerCount()
-	jobs := make(chan metrics.Metrics, workers)
+	jobs := make(chan []metrics.Metrics, workers)
 
-	var wg sync.WaitGroup
+	g, gctx := errgroup.WithContext(ctx)
 
 	for i := 0; i < workers; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for m := range jobs {
-				if err := a.sendMetrics(ctx, []metrics.Metrics{m}); err != nil {
-					a.Logger.Warn("Ошибка отправки метрики", zap.String("id", m.ID), zap.Error(err))
+		g.Go(func() error {
+			for batch := range jobs {
+				if err := a.sendMetrics(gctx, batch); err != nil {
+					a.Logger.Warn("Ошибка отправки метрик", zap.Error(err))
 				}
 			}
-		}()
+			return nil
+		})
 	}
 
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		a.collectLoop(ctx, a.PollInterval, a.CollectMetrics)
-	}()
+	g.Go(func() error {
+		a.collectLoop(gctx, a.PollInterval, a.CollectMetrics)
+		return nil
+	})
 
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		a.collectLoop(ctx, a.PollInterval, func() { a.collectGopsutil(ctx) })
-	}()
+	g.Go(func() error {
+		a.collectLoop(gctx, a.PollInterval, func() { a.collectGopsutil(gctx) })
+		return nil
+	})
 
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		a.reportLoop(ctx, jobs)
-	}()
+	g.Go(func() error {
+		a.reportLoop(gctx, jobs)
+		return nil
+	})
 
-	wg.Wait()
-	return ctx.Err()
+	return g.Wait()
 }
 
 // collectLoop вызывает fn сразу и далее каждые d, пока не отменён ctx
@@ -130,8 +125,8 @@ func (a *Agent) collectLoop(ctx context.Context, d time.Duration, fn func()) {
 	}
 }
 
-// reportLoop каждые ReportInterval читает накопленные метрики и отправляет каждую отдельным заданием в пул
-func (a *Agent) reportLoop(ctx context.Context, jobs chan<- metrics.Metrics) {
+// reportLoop каждые ReportInterval читает накопленные метрики и отправляет весь батч одним заданием в пул
+func (a *Agent) reportLoop(ctx context.Context, jobs chan<- []metrics.Metrics) {
 	defer close(jobs)
 
 	ticker := time.NewTicker(a.ReportInterval)
@@ -142,12 +137,14 @@ func (a *Agent) reportLoop(ctx context.Context, jobs chan<- metrics.Metrics) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			for _, m := range a.buildBatch(ctx) {
-				select {
-				case jobs <- m:
-				case <-ctx.Done():
-					return
-				}
+			batch := a.buildBatch(ctx)
+			if len(batch) == 0 {
+				continue
+			}
+			select {
+			case jobs <- batch:
+			case <-ctx.Done():
+				return
 			}
 		}
 	}
@@ -170,7 +167,7 @@ func (a *Agent) CollectMetrics() {
 	a.Storage.SetGauge(ctx, "RandomValue", &randomValue)
 }
 
-// buildBatch собирает текущий снимок накопленных метрик из хранилища.
+// buildBatch собирает текущий снимок накопленных метрик из хранилища
 func (a *Agent) buildBatch(ctx context.Context) []metrics.Metrics {
 	var batch []metrics.Metrics
 	for name, value := range a.Storage.GetGauges(ctx) {
