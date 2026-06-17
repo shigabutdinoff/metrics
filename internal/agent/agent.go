@@ -4,6 +4,9 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"math/rand"
@@ -17,6 +20,7 @@ import (
 	"github.com/shigabutdinoff/metrics/internal/repository"
 	"github.com/shigabutdinoff/metrics/internal/storage"
 	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
 )
 
 type Agent struct {
@@ -54,32 +58,94 @@ func New(st storage.Storage, logger *zap.Logger) Agent {
 			PollIntervalInt64:   agent.DefaultPollInterval,
 			ReportIntervalInt64: agent.DefaultReportInterval,
 			Address:             agent.DefaultAddress,
+			RateLimitInt64:      agent.DefaultRateLimit,
 		},
 		Logger: logger,
 	}
 }
 
-func (a *Agent) Run() {
-	a.CollectMetrics()
-	a.ReportMetrics()
+// workerCount возвращает число воркеров пула отправки
+func (a *Agent) workerCount() int {
+	if n := int(a.Config.RateLimitInt64); n >= 1 {
+		return n
+	}
+	return 1
+}
 
-	nextPoll := time.Now().Add(a.PollInterval)
-	nextReport := time.Now().Add(a.ReportInterval)
+// Run запускает агент
+func (a *Agent) Run(ctx context.Context) error {
+	workers := a.workerCount()
+	jobs := make(chan []metrics.Metrics, workers)
 
-	ticker := time.NewTicker(100 * time.Millisecond)
+	g, gctx := errgroup.WithContext(ctx)
+
+	for i := 0; i < workers; i++ {
+		g.Go(func() error {
+			for batch := range jobs {
+				if err := a.sendMetrics(gctx, batch); err != nil {
+					a.Logger.Warn("Ошибка отправки метрик", zap.Error(err))
+				}
+			}
+			return nil
+		})
+	}
+
+	g.Go(func() error {
+		a.collectLoop(gctx, a.PollInterval, a.CollectMetrics)
+		return nil
+	})
+
+	g.Go(func() error {
+		a.collectLoop(gctx, a.PollInterval, func() { a.collectGopsutil(gctx) })
+		return nil
+	})
+
+	g.Go(func() error {
+		a.reportLoop(gctx, jobs)
+		return nil
+	})
+
+	return g.Wait()
+}
+
+// collectLoop вызывает fn сразу и далее каждые d, пока не отменён ctx
+func (a *Agent) collectLoop(ctx context.Context, d time.Duration, fn func()) {
+	fn()
+
+	ticker := time.NewTicker(d)
 	defer ticker.Stop()
 
-	for range ticker.C {
-		now := time.Now()
-
-		if !now.Before(nextPoll) {
-			a.CollectMetrics()
-			nextPoll = now.Add(a.PollInterval)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			fn()
 		}
+	}
+}
 
-		if !now.Before(nextReport) {
-			a.ReportMetrics()
-			nextReport = now.Add(a.ReportInterval)
+// reportLoop каждые ReportInterval читает накопленные метрики и отправляет весь батч одним заданием в пул
+func (a *Agent) reportLoop(ctx context.Context, jobs chan<- []metrics.Metrics) {
+	defer close(jobs)
+
+	ticker := time.NewTicker(a.ReportInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			batch := a.buildBatch(ctx)
+			if len(batch) == 0 {
+				continue
+			}
+			select {
+			case jobs <- batch:
+			case <-ctx.Done():
+				return
+			}
 		}
 	}
 }
@@ -101,9 +167,8 @@ func (a *Agent) CollectMetrics() {
 	a.Storage.SetGauge(ctx, "RandomValue", &randomValue)
 }
 
-func (a *Agent) ReportMetrics() {
-	ctx := context.Background()
-
+// buildBatch собирает текущий снимок накопленных метрик из хранилища
+func (a *Agent) buildBatch(ctx context.Context) []metrics.Metrics {
 	var batch []metrics.Metrics
 	for name, value := range a.Storage.GetGauges(ctx) {
 		if value == nil {
@@ -117,18 +182,20 @@ func (a *Agent) ReportMetrics() {
 		}
 		batch = append(batch, metrics.Metrics{ID: name, MType: metrics.Counter, Delta: value})
 	}
-	if len(batch) == 0 {
-		return
-	}
-	if err := a.sendMetrics(ctx, batch); err != nil {
-		a.Logger.Warn("Ошибка отправки метрик", zap.Error(err))
-	}
+	return batch
 }
 
 func (a *Agent) sendMetrics(ctx context.Context, items []metrics.Metrics) error {
 	body, err := json.Marshal(items)
 	if err != nil {
 		return err
+	}
+
+	var hashHeader string
+	if a.Config.Key != "" {
+		mac := hmac.New(sha256.New, []byte(a.Config.Key))
+		mac.Write(body)
+		hashHeader = hex.EncodeToString(mac.Sum(nil))
 	}
 
 	var compressedBody bytes.Buffer
@@ -143,13 +210,18 @@ func (a *Agent) sendMetrics(ctx context.Context, items []metrics.Metrics) error 
 	baseURL := a.Address
 	path := fmt.Sprintf("%s/updates/", baseURL)
 
-	resp, err := a.Client.R().
+	req := a.Client.R().
 		SetContext(ctx).
 		SetHeader("Content-Type", "application/json").
 		SetHeader("Content-Encoding", "gzip").
 		SetHeader("Accept-Encoding", "gzip").
-		SetBody(compressedBody.Bytes()).
-		Post(path)
+		SetBody(compressedBody.Bytes())
+
+	if hashHeader != "" {
+		req.SetHeader("HashSHA256", hashHeader)
+	}
+
+	resp, err := req.Post(path)
 	if err != nil {
 		return err
 	}
@@ -158,23 +230,4 @@ func (a *Agent) sendMetrics(ctx context.Context, items []metrics.Metrics) error 
 		return fmt.Errorf("ошибка получения статуса %d", resp.StatusCode())
 	}
 	return nil
-}
-
-func formatMetricValue(mtype metrics.Type, name string, value any) (string, error) {
-	switch mtype {
-	case metrics.Gauge:
-		gauge, ok := value.(metrics.GaugeValue)
-		if !ok || gauge == nil {
-			return "", fmt.Errorf("неверное gauge значение для %q", name)
-		}
-		return fmt.Sprintf("%f", *gauge), nil
-	case metrics.Counter:
-		counter, ok := value.(metrics.CounterValue)
-		if !ok || counter == nil {
-			return "", fmt.Errorf("неверное counter значение для %q", name)
-		}
-		return fmt.Sprintf("%d", *counter), nil
-	default:
-		return "", fmt.Errorf("неподдерживаемый тип метрики %s", mtype)
-	}
 }

@@ -8,7 +8,7 @@ func EnsureMethodIsPost(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// этот обработчик принимает только запросы, отправленные методом POST
 		if r.Method != http.MethodPost {
-			http.Error(w, "Only POST requests are allowed!", http.StatusMethodNotAllowed)
+			http.Error(w, "Допустимы только POST-запросы!", http.StatusMethodNotAllowed)
 			return
 		}
 		// замыкание: используем ServeHTTP следующего хендлера

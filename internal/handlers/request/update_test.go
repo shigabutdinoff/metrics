@@ -22,7 +22,7 @@ func TestUpdate_Validate(t *testing.T) {
 		wantGauge *float64
 	}{
 		{
-			name:      "valid counter",
+			name:      "корректный counter",
 			typeValue: string(metrics.Counter),
 			nameValue: "requests",
 			rawValue:  "42",
@@ -31,7 +31,7 @@ func TestUpdate_Validate(t *testing.T) {
 			wantDelta: int64Ptr(42),
 		},
 		{
-			name:      "valid gauge",
+			name:      "корректный gauge",
 			typeValue: string(metrics.Gauge),
 			nameValue: "alloc",
 			rawValue:  "3.14",
@@ -40,7 +40,7 @@ func TestUpdate_Validate(t *testing.T) {
 			wantGauge: float64Ptr(3.14),
 		},
 		{
-			name:      "missing name",
+			name:      "отсутствует название",
 			typeValue: string(metrics.Gauge),
 			nameValue: "   ",
 			rawValue:  "1",
@@ -48,7 +48,7 @@ func TestUpdate_Validate(t *testing.T) {
 			wantErr:   true,
 		},
 		{
-			name:      "invalid type",
+			name:      "неверный тип",
 			typeValue: "histogram",
 			nameValue: "alloc",
 			rawValue:  "1",
@@ -56,7 +56,7 @@ func TestUpdate_Validate(t *testing.T) {
 			wantErr:   true,
 		},
 		{
-			name:      "invalid counter value",
+			name:      "неверное значение counter",
 			typeValue: string(metrics.Counter),
 			nameValue: "requests",
 			rawValue:  "abc",
@@ -64,7 +64,7 @@ func TestUpdate_Validate(t *testing.T) {
 			wantErr:   true,
 		},
 		{
-			name:      "invalid gauge value",
+			name:      "неверное значение gauge",
 			typeValue: string(metrics.Gauge),
 			nameValue: "alloc",
 			rawValue:  "abc",
@@ -86,27 +86,27 @@ func TestUpdate_Validate(t *testing.T) {
 			got, err := u.Validate()
 
 			if (err != nil) != tt.wantErr {
-				t.Fatalf("Validate() error = %v, wantErr %v", err, tt.wantErr)
+				t.Fatalf("Validate() ошибка = %v, wantErr %v", err, tt.wantErr)
 			}
 			if got != tt.wantCode {
-				t.Fatalf("Validate() code = %d, want %d", got, tt.wantCode)
+				t.Fatalf("Validate() код = %d, ожидается %d", got, tt.wantCode)
 			}
 
 			if err == nil {
 				if u.ID != tt.nameValue {
-					t.Fatalf("ID = %q, want %q", u.ID, tt.nameValue)
+					t.Fatalf("ID = %q, ожидается %q", u.ID, tt.nameValue)
 				}
 				if string(u.MType) != tt.typeValue {
-					t.Fatalf("MType = %q, want %q", u.MType, tt.typeValue)
+					t.Fatalf("MType = %q, ожидается %q", u.MType, tt.typeValue)
 				}
 				if tt.wantDelta != nil {
 					if u.Delta == nil || *u.Delta != *tt.wantDelta {
-						t.Fatalf("Delta = %v, want %d", u.Delta, *tt.wantDelta)
+						t.Fatalf("Delta = %v, ожидается %d", u.Delta, *tt.wantDelta)
 					}
 				}
 				if tt.wantGauge != nil {
 					if u.Value == nil || *u.Value != *tt.wantGauge {
-						t.Fatalf("Value = %v, want %f", u.Value, *tt.wantGauge)
+						t.Fatalf("Value = %v, ожидается %f", u.Value, *tt.wantGauge)
 					}
 				}
 			}

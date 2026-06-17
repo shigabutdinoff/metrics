@@ -15,6 +15,7 @@ var (
 	fileStoragePath = flag.String("f", server.DefaultFileStoragePath, "Путь до файла")
 	restore         = flag.Bool("r", server.DefaultRestore, "Загружать ранее сохранённые значения")
 	databaseDsn     = flag.String("d", server.DefaultDatabaseDSN, "Адрес подключения к БД")
+	key             = flag.String("k", server.DefaultKey, "Секретный ключ для подписи")
 )
 
 func init() {
@@ -23,6 +24,7 @@ func init() {
 	flag.StringVar(fileStoragePath, "file-storage-path", server.DefaultFileStoragePath, "Путь до файла")
 	flag.BoolVar(restore, "restore", server.DefaultRestore, "Загружать ранее сохранённые значения")
 	flag.StringVar(databaseDsn, "database-dsn", server.DefaultDatabaseDSN, "Адрес подключения к БД")
+	flag.StringVar(key, "key", server.DefaultKey, "Секретный ключ для подписи")
 }
 
 func main() {
@@ -43,6 +45,7 @@ func main() {
 	s.FileStoragePath = *fileStoragePath
 	s.Restore = *restore
 	s.DatabaseDSN = *databaseDsn
+	s.Key = *key
 
 	err = env.Parse(s)
 	if err != nil {

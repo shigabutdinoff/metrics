@@ -17,7 +17,7 @@ func ShowTextPlain(st storage.Storage) http.HandlerFunc {
 	return func(res http.ResponseWriter, req *http.Request) {
 		name, err := url.PathUnescape(chi.URLParam(req, "name"))
 		if err != nil || strings.TrimSpace(name) == "" {
-			http.Error(res, fmt.Sprintf("invalid metric name: %v", err), http.StatusNotFound)
+			http.Error(res, fmt.Sprintf("неверное название метрики: %v", err), http.StatusNotFound)
 			return
 		}
 
@@ -26,7 +26,7 @@ func ShowTextPlain(st storage.Storage) http.HandlerFunc {
 		case metrics.Gauge:
 			value := st.GetGauges(req.Context())[name]
 			if value == nil {
-				http.Error(res, "metric not found", http.StatusNotFound)
+				http.Error(res, "метрика не найдена", http.StatusNotFound)
 				return
 			}
 			res.WriteHeader(http.StatusOK)
@@ -34,13 +34,13 @@ func ShowTextPlain(st storage.Storage) http.HandlerFunc {
 		case metrics.Counter:
 			value := st.GetCounters(req.Context())[name]
 			if value == nil {
-				http.Error(res, "metric not found", http.StatusNotFound)
+				http.Error(res, "метрика не найдена", http.StatusNotFound)
 				return
 			}
 			res.WriteHeader(http.StatusOK)
 			_, _ = res.Write([]byte(strconv.FormatInt(*value, 10)))
 		default:
-			http.Error(res, "invalid metric type", http.StatusBadRequest)
+			http.Error(res, "неверный тип метрики", http.StatusBadRequest)
 		}
 	}
 }
@@ -54,7 +54,7 @@ func ShowApplicationJSON(st storage.Storage) http.HandlerFunc {
 		}
 
 		if strings.TrimSpace(upd.ID) == "" {
-			http.Error(res, "invalid metric name", http.StatusNotFound)
+			http.Error(res, "неверное название метрики", http.StatusNotFound)
 			return
 		}
 
@@ -62,7 +62,7 @@ func ShowApplicationJSON(st storage.Storage) http.HandlerFunc {
 		case metrics.Gauge:
 			value := st.GetGauges(req.Context())[upd.ID]
 			if value == nil {
-				http.Error(res, "metric not found", http.StatusNotFound)
+				http.Error(res, "метрика не найдена", http.StatusNotFound)
 				return
 			}
 			upd.Value = value
@@ -70,13 +70,13 @@ func ShowApplicationJSON(st storage.Storage) http.HandlerFunc {
 		case metrics.Counter:
 			value := st.GetCounters(req.Context())[upd.ID]
 			if value == nil {
-				http.Error(res, "metric not found", http.StatusNotFound)
+				http.Error(res, "метрика не найдена", http.StatusNotFound)
 				return
 			}
 			upd.Delta = value
 			upd.Value = nil
 		default:
-			http.Error(res, "invalid metric type", http.StatusBadRequest)
+			http.Error(res, "неверный тип метрики", http.StatusBadRequest)
 			return
 		}
 

@@ -14,13 +14,13 @@ func TestEnsureMethodIsPost(t *testing.T) {
 		wantCalled bool
 	}{
 		{
-			name:       "allows POST",
+			name:       "разрешает POST",
 			method:     http.MethodPost,
 			wantStatus: http.StatusOK,
 			wantCalled: true,
 		},
 		{
-			name:       "rejects GET",
+			name:       "отклоняет GET",
 			method:     http.MethodGet,
 			wantStatus: http.StatusMethodNotAllowed,
 			wantCalled: false,
@@ -42,10 +42,10 @@ func TestEnsureMethodIsPost(t *testing.T) {
 			h.ServeHTTP(rr, req)
 
 			if rr.Code != tt.wantStatus {
-				t.Fatalf("status = %d, want %d", rr.Code, tt.wantStatus)
+				t.Fatalf("статус = %d, ожидается %d", rr.Code, tt.wantStatus)
 			}
 			if called != tt.wantCalled {
-				t.Fatalf("next called = %v, want %v", called, tt.wantCalled)
+				t.Fatalf("следующий вызван = %v, ожидается %v", called, tt.wantCalled)
 			}
 		})
 	}

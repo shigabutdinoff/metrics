@@ -25,7 +25,7 @@ func StoreTextPlain(st storage.Storage) http.HandlerFunc {
 		case metrics.Counter:
 			st.AddCounter(req.Context(), upd.ID, upd.Delta)
 		default:
-			http.Error(res, "invalid metric type", http.StatusBadRequest)
+			http.Error(res, "неверный тип метрики", http.StatusBadRequest)
 			return
 		}
 
@@ -43,7 +43,7 @@ func StoreApplicationJSON(st storage.Storage) http.HandlerFunc {
 		}
 
 		if strings.TrimSpace(upd.ID) == "" {
-			http.Error(res, "invalid metric name", http.StatusNotFound)
+			http.Error(res, "неверное название метрики", http.StatusNotFound)
 			return
 		}
 
@@ -53,7 +53,7 @@ func StoreApplicationJSON(st storage.Storage) http.HandlerFunc {
 		case metrics.Counter:
 			st.AddCounter(req.Context(), upd.ID, upd.Delta)
 		default:
-			http.Error(res, "invalid metric type", http.StatusBadRequest)
+			http.Error(res, "неверный тип метрики", http.StatusBadRequest)
 			return
 		}
 
