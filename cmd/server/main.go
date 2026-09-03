@@ -16,6 +16,8 @@ var (
 	restore         = flag.Bool("r", server.DefaultRestore, "Загружать ранее сохранённые значения")
 	databaseDsn     = flag.String("d", server.DefaultDatabaseDSN, "Адрес подключения к БД")
 	key             = flag.String("k", server.DefaultKey, "Секретный ключ для подписи")
+	auditFile       = flag.String("audit-file", server.DefaultAuditFile, "Путь к файлу логов аудита")
+	auditURL        = flag.String("audit-url", server.DefaultAuditURL, "URL приёмника логов аудита")
 )
 
 func init() {
@@ -46,6 +48,8 @@ func main() {
 	s.Restore = *restore
 	s.DatabaseDSN = *databaseDsn
 	s.Key = *key
+	s.AuditFile = *auditFile
+	s.AuditURL = *auditURL
 
 	err = env.Parse(s)
 	if err != nil {

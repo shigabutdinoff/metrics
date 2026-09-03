@@ -7,6 +7,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
@@ -177,4 +179,16 @@ func TestGzipCompression(t *testing.T) {
 
 		require.JSONEq(t, successBody, string(b))
 	})
+}
+
+func TestCloseAuditClosesFileSink(t *testing.T) {
+	s := New(storage.NewMemStorage(), zap.NewNop())
+	s.AuditFile = filepath.Join(t.TempDir(), "audit.log")
+
+	s.setupAudit()
+	require.Len(t, s.auditClosers, 1)
+
+	s.closeAudit()
+
+	require.ErrorIs(t, s.auditClosers[0].Close(), os.ErrClosed)
 }

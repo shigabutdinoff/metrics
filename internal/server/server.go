@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -13,6 +14,8 @@ import (
 	"github.com/golang-migrate/migrate/v4"
 	_ "github.com/golang-migrate/migrate/v4/database/postgres"
 	_ "github.com/golang-migrate/migrate/v4/source/file"
+	"github.com/shigabutdinoff/metrics/internal/audit"
+	"github.com/shigabutdinoff/metrics/internal/handlers/middleware/auditmw"
 	"github.com/shigabutdinoff/metrics/internal/handlers/middleware/compress"
 	"github.com/shigabutdinoff/metrics/internal/handlers/middleware/hash"
 	"github.com/shigabutdinoff/metrics/internal/handlers/middleware/logging"
@@ -35,6 +38,8 @@ const (
 	DefaultRestore         = true
 	DefaultDatabaseDSN     = ""
 	DefaultKey             = ""
+	DefaultAuditFile       = ""
+	DefaultAuditURL        = ""
 )
 
 type Server struct {
@@ -47,6 +52,10 @@ type Server struct {
 	Restore         bool   `env:"RESTORE"`
 	DatabaseDSN     string `env:"DATABASE_DSN"`
 	Key             string `env:"KEY"`
+	AuditFile       string `env:"AUDIT_FILE"`
+	AuditURL        string `env:"AUDIT_URL"`
+	auditor         *audit.Publisher
+	auditClosers    []io.Closer
 	onChange        func()
 	Database        *sql.DB
 }
@@ -61,6 +70,8 @@ func New(st storage.Storage, logger *zap.Logger) *Server {
 		Restore:         DefaultRestore,
 		DatabaseDSN:     DefaultDatabaseDSN,
 		Key:             DefaultKey,
+		AuditFile:       DefaultAuditFile,
+		AuditURL:        DefaultAuditURL,
 	}
 
 	return s
@@ -85,15 +96,15 @@ func (s *Server) setupRoutes() {
 		r.Use(compress.GzipMiddleware())
 		r.Use(hash.Middleware(s.Key, s.Logger))
 		r.Get("/", metrics.Index(s.Storage))
-		r.Post("/update/{type}/{name}/{value}", update.StoreTextPlain(s.Storage))
+		r.With(s.audit(auditmw.FromPath)).Post("/update/{type}/{name}/{value}", update.StoreTextPlain(s.Storage))
 		r.Get("/value/{type}/{name}", value.ShowTextPlain(s.Storage))
 	})
 	r.Group(func(r chi.Router) {
 		r.Use(middleware.AllowContentType("application/json"))
 		r.Use(compress.GzipMiddleware())
 		r.Use(hash.Middleware(s.Key, s.Logger))
-		r.Post("/update/", update.StoreApplicationJSON(s.Storage))
-		r.Post("/updates/", updatesRoute.StoreApplicationJSONBatch(s.Storage, s.Logger))
+		r.With(s.audit(auditmw.FromBody)).Post("/update/", update.StoreApplicationJSON(s.Storage))
+		r.With(s.audit(auditmw.FromBody)).Post("/updates/", updatesRoute.StoreApplicationJSONBatch(s.Storage, s.Logger))
 		r.Post("/value/", value.ShowApplicationJSON(s.Storage))
 	})
 	r.Get("/ping", healthcheck.Ping(func() *sql.DB {
@@ -103,6 +114,9 @@ func (s *Server) setupRoutes() {
 }
 
 func (s *Server) Run() {
+	s.setupAudit()
+	defer s.closeAudit()
+
 	s.setupRoutes()
 
 	ps := persistent.New(s.Storage, s.FileStoragePath, s.Logger)
