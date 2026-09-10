@@ -15,6 +15,8 @@ package main
 
 import (
 	"flag"
+	"fmt"
+	"log"
 
 	"github.com/caarlos0/env/v11"
 	"go.uber.org/zap"
@@ -45,11 +47,17 @@ func init() {
 }
 
 func main() {
+	if err := run(); err != nil {
+		log.Fatalf("Сервер остановлен с ошибкой: %v", err)
+	}
+}
+
+func run() error {
 	flag.Parse()
 
 	logger, err := zap.NewDevelopment()
 	if err != nil {
-		panic(err)
+		return fmt.Errorf("создание логгера: %w", err)
 	}
 	defer func() { _ = logger.Sync() }()
 
@@ -65,12 +73,9 @@ func main() {
 	s.AuditURL = *auditURL
 	s.PprofAddress = *pprofAddress
 
-	err = env.Parse(s)
-	if err != nil {
-		logger.Error("Не удалось распарить окружение", zap.Error(err))
+	if err := env.Parse(s); err != nil {
+		return fmt.Errorf("разбор окружения: %w", err)
 	}
 
-	if err := s.Run(); err != nil {
-		logger.Fatal("Сервер остановлен с ошибкой", zap.Error(err))
-	}
+	return s.Run()
 }
