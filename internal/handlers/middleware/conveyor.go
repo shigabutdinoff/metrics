@@ -1,4 +1,3 @@
-// Package middleware содержит общие HTTP-middleware сервера.
 package middleware
 
 import "net/http"

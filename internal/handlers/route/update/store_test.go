@@ -197,7 +197,6 @@ func BenchmarkStoreApplicationJSON(b *testing.B) {
 	}
 }
 
-// brokenWriter отвергает запись тела, имитируя оборванное соединение.
 type brokenWriter struct {
 	http.ResponseWriter
 }
@@ -214,7 +213,6 @@ func TestStoreApplicationJSONRecordsAuditOnWriteError(t *testing.T) {
 
 	StoreApplicationJSON(storage.NewMemStorage())(brokenWriter{httptest.NewRecorder()}, req)
 
-	// метрика уже сохранена, ошибка записи ответа не отменяет событие аудита
 	if got := recorded.Collected(); len(got) != 1 || got[0] != "Alloc" {
 		t.Fatalf("имена для аудита = %v, ожидается [Alloc]", got)
 	}

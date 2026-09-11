@@ -18,6 +18,8 @@ cmd/server/main
 cmd/server/server
 cmd/staticlint/main
 cmd/staticlint/staticlint
+cmd/reset/main
+cmd/reset/reset
 
 # Dependency directories (remove the comment below to include it)
 vendor/

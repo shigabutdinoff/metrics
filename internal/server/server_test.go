@@ -347,13 +347,11 @@ func TestSetupAuditFailsFast(t *testing.T) {
 		s.AuditURL = "not a url"
 
 		require.Error(t, s.Run())
-		// приёмники закрыты и сброшены, дескриптор файла не утёк
 		require.Nil(t, s.auditor)
 		require.Empty(t, s.auditClosers)
 	})
 }
 
-// recordingSink копит события аудита, дошедшие до приёмника.
 type recordingSink struct {
 	mu     sync.Mutex
 	events []audit.Event
@@ -429,7 +427,6 @@ func TestRouterPublishesAudit(t *testing.T) {
 }
 
 func TestBodyLimit(t *testing.T) {
-	// сжатое тело мало, распакованное больше лимита
 	var buf bytes.Buffer
 	buf.WriteByte('[')
 	buf.Write(bytes.Repeat([]byte(" "), reqbody.MaxBodySize+1))

@@ -1,6 +1,8 @@
 package metrics
 
 // Metrics метрика в том виде, в котором она передаётся по JSON-эндпоинтам.
+//
+// generate:reset
 type Metrics struct {
 	// ID имя метрики.
 	ID string `json:"id"`
