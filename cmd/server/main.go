@@ -4,12 +4,14 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"os"
 
 	"github.com/caarlos0/env/v11"
 	"go.uber.org/zap"
 
 	"github.com/shigabutdinoff/metrics/internal/server"
 	"github.com/shigabutdinoff/metrics/internal/storage"
+	"github.com/shigabutdinoff/metrics/pkg/buildinfo"
 )
 
 var (
@@ -24,6 +26,12 @@ var (
 	pprofAddress    = flag.String("pprof-address", server.DefaultPprofAddress, "Адрес pprof, пусто выключает")
 )
 
+var (
+	buildVersion string
+	buildDate    string
+	buildCommit  string
+)
+
 func init() {
 	flag.StringVar(address, "a", server.DefaultAddress, "HTTP server endpoint address (shorthand)")
 	flag.IntVar(storeInterval, "store-interval", server.DefaultStoreInterval, "Интервал времени в секундах")
@@ -34,6 +42,8 @@ func init() {
 }
 
 func main() {
+	buildinfo.Print(os.Stdout, buildVersion, buildDate, buildCommit)
+
 	if err := run(); err != nil {
 		log.Fatalf("Сервер остановлен с ошибкой: %v", err)
 	}

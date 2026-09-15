@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"os"
 	"os/signal"
 	"strings"
 	"syscall"
@@ -15,6 +16,7 @@ import (
 	"github.com/shigabutdinoff/metrics/internal/agent"
 	config "github.com/shigabutdinoff/metrics/internal/config/agent"
 	"github.com/shigabutdinoff/metrics/internal/storage"
+	"github.com/shigabutdinoff/metrics/pkg/buildinfo"
 )
 
 var (
@@ -23,6 +25,12 @@ var (
 	pollIntervalSec   = flag.Int64("poll-interval", int64(config.DefaultPollInterval), "poll interval in seconds")
 	key               = flag.String("key", "", "Секретный ключ для подписи")
 	rateLimit         = flag.Int64("rate-limit", int64(config.DefaultRateLimit), "max concurrent outgoing requests")
+)
+
+var (
+	buildVersion string
+	buildDate    string
+	buildCommit  string
 )
 
 func init() {
@@ -34,6 +42,8 @@ func init() {
 }
 
 func main() {
+	buildinfo.Print(os.Stdout, buildVersion, buildDate, buildCommit)
+
 	flag.Parse()
 
 	logger, err := zap.NewDevelopment()
