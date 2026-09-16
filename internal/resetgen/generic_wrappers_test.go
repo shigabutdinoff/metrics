@@ -114,6 +114,20 @@ var _ fixture.Holder[Wrapper]
 		})
 	}
 
+	t.Run("reject/flat embedded argument", func(t *testing.T) {
+		dir := fixtureModule(t, map[string]string{
+			"source.go": `package fixture
+// generate:reset
+type Flat struct { Number int }
+// generate:reset
+type Holder[T interface { Reset() }] struct { Value T }
+type Wrapper struct { *Flat; Items []int }
+var _ Holder[*Wrapper]
+`,
+		})
+		assertGenericWrapperRejected(t, dir, binary, "Wrapper", "Flat", "плоским Reset")
+	})
+
 	t.Run("accept unrelated invalid instantiation cycle", func(t *testing.T) {
 		dir := fixtureModule(t, map[string]string{
 			"source.go": `package fixture
@@ -155,7 +169,7 @@ var _ Grow[int]
 				"source.go": "package fixture\n",
 				"external/source.go": `package external
 // generate:reset
-type Node struct { Number int }
+type Node struct { Number int; Next *Node }
 // generate:reset
 type Holder[T interface { Reset() }] struct { Value T }
 // generate:reset

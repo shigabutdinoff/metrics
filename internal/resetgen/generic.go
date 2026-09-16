@@ -60,7 +60,7 @@ func checkGenericResets(pattern string, result *generation, roots, metadata []*p
 		legacy:     make(map[resetTypeID]bool),
 		owned:      make(map[string]bool),
 		checked:    make(map[types.Type]bool),
-		protocol:   traversalInterface(nil),
+		protocol:   newTraversalInterface(nil),
 	}
 	for _, pkg := range pkgs {
 		if pkg.IllTyped || pkg.TypesInfo == nil {
@@ -142,7 +142,7 @@ func (c *genericResetChecker) resetParameters(n *types.Named) ([]int, error) {
 	origin := n.Origin()
 	pointer := types.NewPointer(n)
 	legacy := types.Implements(pointer, c.protocol)
-	if !legacy && !types.Implements(pointer, traversalInterface(pointer)) {
+	if !legacy && !types.Implements(pointer, newTraversalInterface(pointer)) {
 		return nil, nil
 	}
 	owned, err := c.generatedProtocol(pointer)

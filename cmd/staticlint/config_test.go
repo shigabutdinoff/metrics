@@ -2,9 +2,11 @@ package main
 
 import (
 	"slices"
+	"strings"
 	"testing"
 
 	"golang.org/x/tools/go/analysis"
+	"honnef.co/go/tools/staticcheck"
 )
 
 func TestLoadConfig(t *testing.T) {
@@ -15,6 +17,10 @@ func TestLoadConfig(t *testing.T) {
 
 	if len(cfg.Prefixes) == 0 {
 		t.Error("prefixes пустой, ни одна проверка staticcheck.io не включится")
+	}
+
+	if !slices.Contains(cfg.Required, "SA") {
+		t.Error("SA нет в required, класс SA перестал быть обязательным")
 	}
 }
 
@@ -31,8 +37,10 @@ func TestStaticcheckAnalyzers(t *testing.T) {
 
 	names := analyzerNames(res)
 
-	if !slices.Contains(names, "SA1000") {
-		t.Error("SA1000 не включён, хотя префикс SA есть в конфиге")
+	for _, a := range staticcheck.Analyzers {
+		if !slices.Contains(names, a.Analyzer.Name) {
+			t.Errorf("SA-проверка %q не включена", a.Analyzer.Name)
+		}
 	}
 
 	if slices.Contains(names, "QF1008") {
@@ -45,25 +53,74 @@ func TestStaticcheckAnalyzersConfig(t *testing.T) {
 		name    string
 		cfg     checksConfig
 		wantErr bool
+		wantMsg string
 	}{
 		{
 			name:    "опечатка в exclude",
-			cfg:     checksConfig{Prefixes: []string{"SA"}, Exclude: []string{"QF1O08"}},
+			cfg:     checksConfig{Prefixes: []string{"SA"}, Required: []string{"SA"}, Exclude: []string{"QF1O08"}},
 			wantErr: true,
 		},
 		{
 			name:    "опечатка в prefixes",
-			cfg:     checksConfig{Prefixes: []string{"SA", "ZZ"}},
+			cfg:     checksConfig{Prefixes: []string{"SA", "ZZ"}, Required: []string{"SA"}},
 			wantErr: true,
 		},
 		{
 			name:    "пустой prefixes",
-			cfg:     checksConfig{},
+			cfg:     checksConfig{Required: []string{"SA"}},
 			wantErr: true,
 		},
 		{
+			name: "класс SA покрыт более широким префиксом",
+			cfg:  checksConfig{Prefixes: []string{"S"}, Required: []string{"S"}},
+		},
+		{
+			name:    "класс SA сужен в required",
+			cfg:     checksConfig{Prefixes: []string{"SA"}, Required: []string{"SA1"}},
+			wantErr: true,
+			wantMsg: "класс SA",
+		},
+		{
 			name: "префикс совпал только с исключённой проверкой",
-			cfg:  checksConfig{Prefixes: []string{"SA", "QF1008"}, Exclude: []string{"QF1008"}},
+			cfg:  checksConfig{Prefixes: []string{"SA", "QF1008"}, Required: []string{"SA"}, Exclude: []string{"QF1008"}},
+		},
+		{
+			name:    "обязательная проверка в exclude",
+			cfg:     checksConfig{Prefixes: []string{"SA"}, Required: []string{"SA"}, Exclude: []string{"SA1019"}},
+			wantErr: true,
+		},
+		{
+			name:    "обязательный префикс не включён",
+			cfg:     checksConfig{Prefixes: []string{"S1"}, Required: []string{"SA"}},
+			wantErr: true,
+			wantMsg: "не включена",
+		},
+		{
+			name: "обязательный префикс включён более широким",
+			cfg:  checksConfig{Prefixes: []string{"S"}, Required: []string{"SA"}},
+		},
+		{
+			name:    "обязательный префикс сужен в prefixes",
+			cfg:     checksConfig{Prefixes: []string{"SA1"}, Required: []string{"SA"}},
+			wantErr: true,
+			wantMsg: "не включена",
+		},
+		{
+			name:    "неизвестный префикс в required",
+			cfg:     checksConfig{Prefixes: []string{"SA"}, Required: []string{"SA", "ZZ"}},
+			wantErr: true,
+			wantMsg: `"ZZ"`,
+		},
+		{
+			name:    "опечатка в exclude с обязательным префиксом",
+			cfg:     checksConfig{Prefixes: []string{"SA"}, Required: []string{"SA"}, Exclude: []string{"SA10190"}},
+			wantErr: true,
+			wantMsg: "неизвестная проверка",
+		},
+		{
+			name:    "пустой префикс в required",
+			cfg:     checksConfig{Prefixes: []string{"SA"}, Required: []string{""}, Exclude: []string{"QF1008"}},
+			wantErr: true,
 		},
 	}
 
@@ -72,6 +129,9 @@ func TestStaticcheckAnalyzersConfig(t *testing.T) {
 			res, err := staticcheckAnalyzers(tt.cfg)
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("staticcheckAnalyzers() вернул ошибку %v, ждали ошибку: %v, получено %d проверок", err, tt.wantErr, len(res))
+			}
+			if tt.wantMsg != "" && !strings.Contains(err.Error(), tt.wantMsg) {
+				t.Errorf("ошибка %v не содержит %q", err, tt.wantMsg)
 			}
 		})
 	}

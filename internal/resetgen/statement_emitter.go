@@ -1,13 +1,17 @@
 package resetgen
 
 import (
+	"errors"
 	"fmt"
 	"go/types"
 	"strings"
 )
 
+var errFlatTraversal = errors.New("поле требует обхода, но тип размечен плоским")
+
 type statementEmitter struct {
 	marked       map[*types.TypeName]bool
+	traversal    map[*types.TypeName]bool
 	names        nameAllocator
 	helpers      *resetHelpers
 	declarations map[string]bool
@@ -23,6 +27,13 @@ func (e *statementEmitter) emit(expr string, t types.Type, pointers map[*types.P
 		return "", err
 	}
 	if n, ok := types.Unalias(t).(*types.Named); ok && e.marked[n.Obj()] {
+		if !e.traversal[n.Obj()] {
+			return fmt.Sprintf("%s.%s()", operand(expr), resetMethodName), nil
+		}
+		if e.visited == "" {
+			return "", errFlatTraversal
+		}
+
 		return fmt.Sprintf("%s.%s(%s, &(%s))", operand(expr), resetWithVisitedMethodName, e.visited, expr), nil
 	}
 	if method := resetMethod(t); method != nil {
@@ -40,13 +51,16 @@ func (e *statementEmitter) emit(expr string, t types.Type, pointers map[*types.P
 				return "", err
 			}
 			_, pointerReceiver := types.Unalias(method.Signature().Recv().Type()).(*types.Pointer)
-			if !pointerReceiver && types.Implements(t, traversalInterface(t)) {
+			if !pointerReceiver && types.Implements(t, newTraversalInterface(t)) {
 				value = expr
 				valueType = t
 			}
 		}
 		if err := checkLegacyEmbedding(valueType); err != nil {
 			return "", err
+		}
+		if e.visited == "" {
+			return "", errFlatTraversal
 		}
 		if e.helpers.value == "" {
 			e.helpers.value = e.names.take("resetValue")

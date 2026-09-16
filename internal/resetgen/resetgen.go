@@ -9,6 +9,7 @@ import (
 	"go/token"
 	"go/types"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -74,10 +75,13 @@ func generate(pattern string) (*generation, error) {
 		}
 	}
 
+	traversal := flatTraversal(structs, marked)
+
 	result := &generation{files: make(map[string][]byte)}
 	dispatches := make(map[resetTypeID][]int)
 	context := &generationContext{
 		marked:      marked,
+		traversal:   traversal,
 		constraints: constraints,
 		metadata:    metadata,
 		dispatches:  dispatches,
@@ -115,6 +119,23 @@ func generate(pattern string) (*generation, error) {
 		return nil, err
 	}
 	return result, nil
+}
+
+func flatTraversal(structs map[*packages.Package][]*types.Named, marked map[*types.TypeName]bool) map[*types.TypeName]bool {
+	traversal := maps.Clone(marked)
+	for changed := true; changed; {
+		changed = false
+		for _, list := range structs {
+			for _, n := range list {
+				if traversal[n.Obj()] && !needsTraversal(n, marked, traversal) {
+					traversal[n.Obj()] = false
+					changed = true
+				}
+			}
+		}
+	}
+
+	return traversal
 }
 
 func loadPackages(pattern string, fset *token.FileSet) ([]*packages.Package, []*packages.Package, error) {
