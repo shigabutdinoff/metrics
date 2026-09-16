@@ -1,26 +1,17 @@
-// Команда server принимает и хранит метрики.
-//
-// Параметры задаются флагами и переменными окружения:
-//
-//	-a, -address            адрес, на котором сервер слушает HTTP
-//	-i, -store-interval     период сохранения метрик в файл в секундах
-//	-f, -file-storage-path  путь к файлу с метриками
-//	-r, -restore            восстанавливать ли метрики из файла при старте
-//	-d, -database-dsn       строка подключения к PostgreSQL
-//	-k, -key                ключ подписи HMAC-SHA256
-//	-audit-file             путь к файлу аудита
-//	-audit-url              адрес приёмника аудита
-//	-pprof-address          адрес сервера pprof, пустой отключает его
 package main
 
 import (
 	"flag"
+	"fmt"
+	"log"
+	"os"
 
 	"github.com/caarlos0/env/v11"
 	"go.uber.org/zap"
 
 	"github.com/shigabutdinoff/metrics/internal/server"
 	"github.com/shigabutdinoff/metrics/internal/storage"
+	"github.com/shigabutdinoff/metrics/pkg/buildinfo"
 )
 
 var (
@@ -35,6 +26,12 @@ var (
 	pprofAddress    = flag.String("pprof-address", server.DefaultPprofAddress, "Адрес pprof, пусто выключает")
 )
 
+var (
+	buildVersion string
+	buildDate    string
+	buildCommit  string
+)
+
 func init() {
 	flag.StringVar(address, "a", server.DefaultAddress, "HTTP server endpoint address (shorthand)")
 	flag.IntVar(storeInterval, "store-interval", server.DefaultStoreInterval, "Интервал времени в секундах")
@@ -45,11 +42,19 @@ func init() {
 }
 
 func main() {
+	buildinfo.Print(os.Stdout, buildVersion, buildDate, buildCommit)
+
+	if err := run(); err != nil {
+		log.Fatalf("Сервер остановлен с ошибкой: %v", err)
+	}
+}
+
+func run() error {
 	flag.Parse()
 
 	logger, err := zap.NewDevelopment()
 	if err != nil {
-		panic(err)
+		return fmt.Errorf("создание логгера: %w", err)
 	}
 	defer func() { _ = logger.Sync() }()
 
@@ -65,12 +70,9 @@ func main() {
 	s.AuditURL = *auditURL
 	s.PprofAddress = *pprofAddress
 
-	err = env.Parse(s)
-	if err != nil {
-		logger.Error("Не удалось распарить окружение", zap.Error(err))
+	if err := env.Parse(s); err != nil {
+		return fmt.Errorf("разбор окружения: %w", err)
 	}
 
-	if err := s.Run(); err != nil {
-		logger.Fatal("Сервер остановлен с ошибкой", zap.Error(err))
-	}
+	return s.Run()
 }

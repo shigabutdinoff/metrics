@@ -1,0 +1,4 @@
+{
+  "prefixes": ["SA", "S1", "ST1", "QF1"],
+  "exclude": ["QF1008"]
+}

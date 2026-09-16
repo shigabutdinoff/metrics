@@ -284,7 +284,6 @@ func TestPublisherCloseGivesUpOnObserverIgnoringContext(t *testing.T) {
 func TestPublisherDeliversWithinFullCloseTimeout(t *testing.T) {
 	const events = 5
 
-	// доставка дольше половины бюджета: ранняя отмена ctx съела бы остаток
 	slow := &fakeObserver{delay: 60 * time.Millisecond}
 	p := newTestPublisher([]Option{WithCloseTimeout(400 * time.Millisecond)}, slow)
 	for range events {
