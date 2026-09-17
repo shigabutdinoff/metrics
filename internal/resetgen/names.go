@@ -1,6 +1,7 @@
 package resetgen
 
 import (
+	"errors"
 	"fmt"
 	"go/ast"
 	"go/parser"
@@ -21,7 +22,8 @@ func reservePackageNames(pkg *packages.Package, metadata []*packages.Package, na
 		names[name] = true
 	}
 	seen := make(map[string]bool)
-	importNames := make(map[string][]string)
+	sources := make(map[string]string)
+	var order []string
 	fset := token.NewFileSet()
 	for candidate := range packages.Postorder(metadata) {
 		if candidate.Dir != pkg.Dir || candidate.Name != pkg.Name {
@@ -87,34 +89,43 @@ func reservePackageNames(pkg *packages.Package, metadata []*packages.Package, na
 					names[imported.Name] = true
 					continue
 				}
-				if _, loaded := importNames[importPath]; !loaded {
-					importNames[importPath], err = loadImportNames(pkg.Dir, importPath)
-					if err != nil {
-						return nil, fmt.Errorf("%s: %w", path, err)
-					}
-				}
-				for _, name := range importNames[importPath] {
-					names[name] = true
+				if _, ok := sources[importPath]; !ok {
+					sources[importPath] = path
+					order = append(order, importPath)
 				}
 			}
+		}
+	}
+	if len(order) > 0 {
+		loaded, err := loadImportNames(pkg.Dir, order, sources)
+		if err != nil {
+			return nil, err
+		}
+		for _, name := range loaded {
+			names[name] = true
 		}
 	}
 	return declarations, nil
 }
 
-func loadImportNames(dir, importPath string) ([]string, error) {
+func loadImportNames(dir string, importPaths []string, sources map[string]string) ([]string, error) {
 	pkgs, err := packages.Load(&packages.Config{
 		Mode: packages.NeedName | packages.NeedFiles,
 		Dir:  dir,
-	}, importPath)
+	}, importPaths...)
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", importPath, err)
+		return nil, fmt.Errorf("%s: не удалось загрузить импорты: %w", dir, err)
+	}
+	if len(pkgs) != len(importPaths) {
+		return nil, fmt.Errorf("%s: не удалось загрузить импорты: %s",
+			dir, strings.Join(importPaths, ", "))
 	}
 	var names []string
 	fset := token.NewFileSet()
 	for _, pkg := range pkgs {
+		var found []string
 		if pkg.Name != "" {
-			names = append(names, pkg.Name)
+			found = append(found, pkg.Name)
 		}
 		for _, path := range slices.Concat(pkg.GoFiles, pkg.IgnoredFiles) {
 			if filepath.Ext(path) != ".go" || strings.HasSuffix(path, "_test.go") {
@@ -124,12 +135,30 @@ func loadImportNames(dir, importPath string) ([]string, error) {
 			if err != nil {
 				return nil, err
 			}
-			names = append(names, file.Name.Name)
+			found = append(found, file.Name.Name)
 		}
-	}
-	if len(names) == 0 {
-		return nil, fmt.Errorf("не удалось определить имя импортируемого пакета %s", importPath)
+		if len(found) == 0 {
+			return nil, importNameError(dir, pkg, sources)
+		}
+		names = append(names, found...)
 	}
 	slices.Sort(names)
 	return slices.Compact(names), nil
+}
+
+func importNameError(dir string, pkg *packages.Package, sources map[string]string) error {
+	id := pkg.PkgPath
+	if id == "" {
+		id = pkg.ID
+	}
+	cause := errors.New("не удалось определить имя импортируемого пакета")
+	if len(pkg.Errors) > 0 {
+		cause = pkg.Errors[0]
+	}
+	file := sources[id]
+	if file == "" {
+		file = dir
+	}
+
+	return fmt.Errorf("%s: %s: %w", file, id, cause)
 }

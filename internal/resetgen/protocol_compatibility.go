@@ -24,7 +24,7 @@ func (c *genericResetChecker) checkGeneratedArgument(t types.Type, legacy bool) 
 	if err != nil || !owned {
 		return err
 	}
-	if types.Implements(t, c.protocol) || (!legacy && types.Implements(t, traversalInterface(t))) {
+	if types.Implements(t, c.protocol) || (!legacy && types.Implements(t, newTraversalInterface(t))) {
 		adapter := types.NewMethodSet(t).Lookup(nil, resetWithVisitedMethodName)
 		owned, err := c.generatedMethod(adapter.Obj().(*types.Func))
 		if err != nil {
@@ -34,12 +34,17 @@ func (c *genericResetChecker) checkGeneratedArgument(t types.Type, legacy bool) 
 			return nil
 		}
 	}
-	return fmt.Errorf("%s: унаследованный Reset типа %s теряет общую карту посещений; добавьте generate:reset или пользовательский адаптер ResetWithVisited",
-		types.TypeString(t, nil), types.TypeString(method.Signature().Recv().Type(), nil))
+	recv := method.Signature().Recv().Type()
+	reason := "теряет общую карту посещений"
+	if types.NewMethodSet(recv).Lookup(nil, resetWithVisitedMethodName) == nil {
+		reason = "сбрасывает плоским Reset только встроенный тип"
+	}
+	return fmt.Errorf("%s: унаследованный Reset типа %s %s; добавьте generate:reset или пользовательский адаптер ResetWithVisited",
+		types.TypeString(t, nil), types.TypeString(recv, nil), reason)
 }
 
 func checkLegacyEmbedding(t types.Type) error {
-	if types.IsInterface(t) || !types.Implements(t, traversalInterface(nil)) {
+	if types.IsInterface(t) || !types.Implements(t, newTraversalInterface(nil)) {
 		return nil
 	}
 	selection := types.NewMethodSet(t).Lookup(nil, resetWithVisitedMethodName)
@@ -64,7 +69,7 @@ func checkLegacyEmbedding(t types.Type) error {
 }
 
 func (c *genericResetChecker) checkLegacyArgument(t types.Type) error {
-	if types.IsInterface(t) || !types.Implements(t, traversalInterface(t)) {
+	if types.IsInterface(t) || !types.Implements(t, newTraversalInterface(t)) {
 		return nil
 	}
 	owned, err := c.generatedProtocol(t)

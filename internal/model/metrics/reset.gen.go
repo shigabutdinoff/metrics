@@ -7,31 +7,6 @@ func (m *Metrics) Reset() {
 	if m == nil {
 		return
 	}
-	m.ResetWithVisited(map[interface{}]struct{}{}, m)
-}
-
-// ResetWithVisited продолжает сброс с общей картой посещённых объектов.
-// original сохраняет вызов пользовательского Reset при встраивании типа.
-// Тип необязательного параметра отличает собственный протокол от унаследованного.
-func (m *Metrics) ResetWithVisited(resetVisited map[interface{}]struct{}, resetOriginal interface{ Reset() }, _ ...*Metrics) {
-	if resetOriginal == nil {
-		return
-	}
-	if resetOriginal != m {
-		resetOriginal.Reset()
-		return
-	}
-	if m == nil {
-		return
-	}
-	if resetVisited == nil {
-		resetVisited = map[interface{}]struct{}{}
-	}
-	if _, resetSeen := resetVisited[m]; resetSeen {
-		return
-	}
-	resetVisited[m] = struct{}{}
-
 	m.ID = ""
 	m.MType = ""
 	if m.Delta != nil {

@@ -2,8 +2,10 @@ package server
 
 import (
 	"context"
+	"crypto/rsa"
 	"database/sql"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -19,6 +21,7 @@ import (
 	"github.com/shigabutdinoff/metrics/internal/audit"
 	"github.com/shigabutdinoff/metrics/internal/handlers/middleware/auditmw"
 	"github.com/shigabutdinoff/metrics/internal/handlers/middleware/compress"
+	"github.com/shigabutdinoff/metrics/internal/handlers/middleware/decrypt"
 	"github.com/shigabutdinoff/metrics/internal/handlers/middleware/hash"
 	"github.com/shigabutdinoff/metrics/internal/handlers/middleware/logging"
 	"github.com/shigabutdinoff/metrics/internal/handlers/middleware/reqbody"
@@ -31,6 +34,7 @@ import (
 	"github.com/shigabutdinoff/metrics/internal/service/mservice"
 	"github.com/shigabutdinoff/metrics/internal/service/persistent"
 	"github.com/shigabutdinoff/metrics/internal/storage"
+	"github.com/shigabutdinoff/metrics/pkg/rsacrypt"
 )
 
 // Значения полей Server по умолчанию.
@@ -47,6 +51,8 @@ const (
 	DefaultDatabaseDSN = ""
 	// DefaultKey проверка и выдача подписи выключены.
 	DefaultKey = ""
+	// DefaultCryptoKey расшифровка запросов выключена.
+	DefaultCryptoKey = ""
 	// DefaultAuditFile аудит в файл выключен.
 	DefaultAuditFile = ""
 	// DefaultAuditURL аудит по HTTP выключен.
@@ -75,6 +81,8 @@ type Server struct {
 	DatabaseDSN string `env:"DATABASE_DSN"`
 	// Key ключ подписи HMAC-SHA256, флаг -k.
 	Key string `env:"KEY"`
+	// CryptoKey путь к файлу с приватным ключом RSA, флаг -crypto-key.
+	CryptoKey string `env:"CRYPTO_KEY"`
 	// AuditFile путь к файлу аудита, флаг -audit-file.
 	AuditFile string `env:"AUDIT_FILE"`
 	// AuditURL адрес приёмника аудита, флаг -audit-url.
@@ -84,6 +92,7 @@ type Server struct {
 	auditor      *audit.Publisher
 	auditClosers []io.Closer
 	onChange     func()
+	privateKey   *rsa.PrivateKey
 	// Database соединение с PostgreSQL, открывается при непустом DatabaseDSN.
 	Database *sql.DB
 }
@@ -99,6 +108,7 @@ func New(st storage.Storage, logger *zap.Logger) *Server {
 		Restore:         DefaultRestore,
 		DatabaseDSN:     DefaultDatabaseDSN,
 		Key:             DefaultKey,
+		CryptoKey:       DefaultCryptoKey,
 		AuditFile:       DefaultAuditFile,
 		AuditURL:        DefaultAuditURL,
 		PprofAddress:    DefaultPprofAddress,
@@ -131,6 +141,7 @@ func (s *Server) setupRoutes() {
 	})
 	r.Group(func(r chi.Router) {
 		r.Use(middleware.AllowContentType("application/json"))
+		r.Use(decrypt.Middleware(s.privateKey))
 		r.Use(compress.GzipMiddleware())
 		r.Use(middleware.RequestSize(reqbody.MaxBodySize))
 		r.Use(hash.Middleware(s.Key, s.Logger))
@@ -146,6 +157,14 @@ func (s *Server) setupRoutes() {
 
 // Run настраивает сервер и обслуживает запросы до ошибки.
 func (s *Server) Run() error {
+	if s.CryptoKey != "" {
+		key, err := rsacrypt.LoadPrivateKey(s.CryptoKey)
+		if err != nil {
+			return fmt.Errorf("загрузка приватного ключа: %w", err)
+		}
+		s.privateKey = key
+	}
+
 	defer s.closeAudit()
 	if err := s.setupAudit(); err != nil {
 		return err

@@ -1,9 +1,12 @@
 package agent
 
 import (
+	"bytes"
 	"compress/gzip"
 	"context"
 	"crypto/hmac"
+	"crypto/rand"
+	"crypto/rsa"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -11,6 +14,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
@@ -24,6 +28,7 @@ import (
 	config "github.com/shigabutdinoff/metrics/internal/config/agent"
 	"github.com/shigabutdinoff/metrics/internal/model/metrics"
 	"github.com/shigabutdinoff/metrics/internal/storage"
+	"github.com/shigabutdinoff/metrics/pkg/rsacrypt"
 )
 
 func TestAgent_CollectMetrics(t *testing.T) {
@@ -363,5 +368,80 @@ func BenchmarkAgent_SendMetrics(b *testing.B) {
 		if err := a.sendMetrics(ctx, items); err != nil {
 			b.Fatalf("sendMetrics() ошибка = %v", err)
 		}
+	}
+}
+
+func TestAgent_SendMetrics_Encrypted(t *testing.T) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var got []metrics.Metrics
+	var gotHash, wantHash string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		encrypted, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("io.ReadAll() ошибка = %v", err)
+			return
+		}
+		compressed, err := rsacrypt.Decrypt(key, encrypted)
+		if err != nil {
+			t.Errorf("rsacrypt.Decrypt() ошибка = %v", err)
+			return
+		}
+		zr, err := gzip.NewReader(bytes.NewReader(compressed))
+		if err != nil {
+			t.Errorf("gzip.NewReader() ошибка = %v", err)
+			return
+		}
+		defer zr.Close()
+		body, err := io.ReadAll(zr)
+		if err != nil {
+			t.Errorf("io.ReadAll(gzip) ошибка = %v", err)
+			return
+		}
+		if err := json.Unmarshal(body, &got); err != nil {
+			t.Errorf("json.Unmarshal() ошибка = %v", err)
+			return
+		}
+		mac := hmac.New(sha256.New, []byte("secret"))
+		mac.Write(body)
+		wantHash = hex.EncodeToString(mac.Sum(nil))
+		gotHash = r.Header.Get("HashSHA256")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer ts.Close()
+
+	g := 1.5
+	a := &Agent{
+		Storage:   storage.NewMemStorage(),
+		Client:    resty.NewWithClient(ts.Client()),
+		Config:    config.Config{Address: config.Address(ts.URL), Key: "secret"},
+		PublicKey: &key.PublicKey,
+	}
+
+	items := []metrics.Metrics{{ID: "cpu", MType: metrics.Gauge, Value: &g}}
+	if err := a.sendMetrics(t.Context(), items); err != nil {
+		t.Fatalf("sendMetrics() ошибка = %v", err)
+	}
+
+	if len(got) != 1 || got[0].ID != "cpu" || got[0].Value == nil || *got[0].Value != g {
+		t.Fatalf("сервер получил %+v, ожидается %+v", got, items)
+	}
+	if gotHash != wantHash {
+		t.Fatalf("HashSHA256 = %q, ожидается %q по открытому JSON", gotHash, wantHash)
+	}
+}
+
+func TestAgent_Run_BadCryptoKey(t *testing.T) {
+	a := &Agent{
+		Storage: storage.NewMemStorage(),
+		Config:  config.Config{CryptoKey: filepath.Join(t.TempDir(), "missing.pem")},
+		Logger:  zap.NewNop(),
+	}
+
+	if err := a.Run(t.Context()); err == nil {
+		t.Fatal("ожидалась ошибка загрузки публичного ключа")
 	}
 }
