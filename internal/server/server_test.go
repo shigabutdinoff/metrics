@@ -5,6 +5,8 @@ import (
 	"compress/gzip"
 	"context"
 	"crypto/hmac"
+	"crypto/rand"
+	"crypto/rsa"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -27,6 +29,7 @@ import (
 	"github.com/shigabutdinoff/metrics/internal/handlers/middleware/reqbody"
 	"github.com/shigabutdinoff/metrics/internal/model/metrics"
 	"github.com/shigabutdinoff/metrics/internal/storage"
+	"github.com/shigabutdinoff/metrics/pkg/rsacrypt"
 )
 
 func TestNew(t *testing.T) {
@@ -103,6 +106,14 @@ func TestServer_Run(t *testing.T) {
 		s := New(storage.NewMemStorage(), zap.NewNop())
 		s.Address = "bad"
 		s.AuditFile = filepath.Join(t.TempDir(), "missing", "audit.log")
+
+		require.ErrorIs(t, s.Run(), os.ErrNotExist)
+	})
+
+	t.Run("возвращает ошибку приватного ключа", func(t *testing.T) {
+		s := New(storage.NewMemStorage(), zap.NewNop())
+		s.Address = "bad"
+		s.CryptoKey = filepath.Join(t.TempDir(), "missing.pem")
 
 		require.ErrorIs(t, s.Run(), os.ErrNotExist)
 	})
@@ -444,6 +455,46 @@ func TestBodyLimit(t *testing.T) {
 			s.Router.ServeHTTP(rr, req)
 
 			require.Equal(t, http.StatusRequestEntityTooLarge, rr.Code)
+		})
+	}
+}
+
+func TestRouter_Updates_Encrypted(t *testing.T) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+	body, err := json.Marshal(sampleBatch())
+	require.NoError(t, err)
+	encrypted, err := rsacrypt.Encrypt(&key.PublicKey, gzipBytes(body))
+	require.NoError(t, err)
+	hash := computeHMAC([]byte("secret"), body)
+
+	tests := []struct {
+		name       string
+		body       []byte
+		wantStatus int
+	}{
+		{name: "шифрованное тело принимается", body: encrypted, wantStatus: http.StatusOK},
+		{name: "открытое тело при заданном ключе отклоняется", body: gzipBytes(body), wantStatus: http.StatusBadRequest},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := New(storage.NewMemStorage(), zap.NewNop())
+			s.Key = "secret"
+			s.privateKey = key
+			s.setupRoutes()
+
+			rr := httptest.NewRecorder()
+			s.Router.ServeHTTP(rr, updatesRequest(bytes.NewReader(tt.body), hash))
+			require.Equal(t, tt.wantStatus, rr.Code, rr.Body.String())
+
+			poll := s.Storage.GetCounters(t.Context())["PollCount"]
+			if tt.wantStatus != http.StatusOK {
+				require.Nil(t, poll)
+				return
+			}
+			require.NotNil(t, poll)
+			require.EqualValues(t, 42, *poll)
 		})
 	}
 }
