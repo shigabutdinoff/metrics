@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"context"
 	"crypto/hmac"
+	"crypto/rsa"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -24,6 +25,7 @@ import (
 	"github.com/shigabutdinoff/metrics/internal/model/metrics"
 	"github.com/shigabutdinoff/metrics/internal/repository"
 	"github.com/shigabutdinoff/metrics/internal/storage"
+	"github.com/shigabutdinoff/metrics/pkg/rsacrypt"
 )
 
 // Agent собирает метрики и отправляет их на сервер.
@@ -38,6 +40,8 @@ type Agent struct {
 	ReportInterval time.Duration
 	// Logger журнал, куда пишутся ошибки сбора и отправки.
 	Logger *zap.Logger
+	// PublicKey ключ шифрования тела запросов, Run читает его из Config.CryptoKey.
+	PublicKey *rsa.PublicKey
 	// Config конфигурация агента: адрес сервера, интервалы, ключ подписи.
 	agent.Config
 }
@@ -86,6 +90,14 @@ func (a *Agent) workerCount() int {
 
 // Run запускает агент
 func (a *Agent) Run(ctx context.Context) error {
+	if a.CryptoKey != "" {
+		pub, err := rsacrypt.LoadPublicKey(a.CryptoKey)
+		if err != nil {
+			return fmt.Errorf("загрузка публичного ключа: %w", err)
+		}
+		a.PublicKey = pub
+	}
+
 	workers := a.workerCount()
 	jobs := make(chan []metrics.Metrics, workers)
 
@@ -224,6 +236,13 @@ func (a *Agent) sendMetrics(ctx context.Context, items []metrics.Metrics) error 
 		return err
 	}
 
+	payload := compressedBody.Bytes()
+	if a.PublicKey != nil {
+		if payload, err = rsacrypt.Encrypt(a.PublicKey, payload); err != nil {
+			return err
+		}
+	}
+
 	path := string(a.Address) + "/updates/"
 
 	req := a.Client.R().
@@ -231,7 +250,7 @@ func (a *Agent) sendMetrics(ctx context.Context, items []metrics.Metrics) error 
 		SetHeader("Content-Type", "application/json").
 		SetHeader("Content-Encoding", "gzip").
 		SetHeader("Accept-Encoding", "gzip").
-		SetBody(compressedBody.Bytes())
+		SetBody(payload)
 
 	if hashHeader != "" {
 		req.SetHeader("HashSHA256", hashHeader)

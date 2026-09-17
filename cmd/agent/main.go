@@ -24,6 +24,7 @@ var (
 	reportIntervalSec = flag.Int64("report-interval", int64(config.DefaultReportInterval), "report interval in seconds")
 	pollIntervalSec   = flag.Int64("poll-interval", int64(config.DefaultPollInterval), "poll interval in seconds")
 	key               = flag.String("key", "", "Секретный ключ для подписи")
+	cryptoKey         = flag.String("crypto-key", "", "Путь к файлу с публичным ключом")
 	rateLimit         = flag.Int64("rate-limit", int64(config.DefaultRateLimit), "max concurrent outgoing requests")
 )
 
@@ -73,6 +74,8 @@ func main() {
 			a.PollInterval = time.Duration(*pollIntervalSec) * time.Second
 		case "key", "k":
 			a.Key = *key
+		case "crypto-key":
+			a.CryptoKey = *cryptoKey
 		case "rate-limit", "l":
 			a.RateLimitInt64 = config.RateLimit(*rateLimit)
 		}
@@ -82,7 +85,7 @@ func main() {
 	defer stop()
 
 	if err = a.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
-		logger.Error("Агент остановлен с ошибкой", zap.Error(err))
+		logger.Fatal("Агент остановлен с ошибкой", zap.Error(err))
 	}
 }
 

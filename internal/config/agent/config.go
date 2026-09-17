@@ -35,6 +35,8 @@ type Config struct {
 	UseBatch bool `env:"USE_BATCH"`
 	// Key ключ подписи HMAC-SHA256, флаг -k.
 	Key string `env:"KEY"`
+	// CryptoKey путь к сертификату с публичным ключом, флаг -crypto-key.
+	CryptoKey string `env:"CRYPTO_KEY"`
 	// RateLimitInt64 число одновременных запросов к серверу, флаг -l.
 	RateLimitInt64 RateLimit `env:"RATE_LIMIT"`
 }
