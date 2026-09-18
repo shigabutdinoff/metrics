@@ -8,7 +8,9 @@
 //	-r, -restore            восстанавливать ли метрики из файла при старте
 //	-d, -database-dsn       строка подключения к PostgreSQL
 //	-k, -key                ключ подписи HMAC-SHA256
+//	-crypto-key             путь к файлу с приватным ключом RSA, см. cmd/keygen
 //	-audit-file             путь к файлу аудита
 //	-audit-url              адрес приёмника аудита
 //	-pprof-address          адрес сервера pprof, пустой отключает его
+//	-c, -config             путь к JSON-файлу конфигурации
 package main

@@ -13,6 +13,7 @@ import (
 
 type generationContext struct {
 	marked      map[*types.TypeName]bool
+	traversal   map[*types.TypeName]bool
 	constraints *constraintChecker
 	metadata    []*packages.Package
 	dispatches  map[resetTypeID][]int
@@ -41,6 +42,7 @@ func resetFile(pkg *packages.Package, structs []*types.Named, context *generatio
 	emitter := &fileEmitter{
 		pkg:          pkg,
 		marked:       context.marked,
+		traversal:    context.traversal,
 		names:        names,
 		declarations: declarations,
 		constraints:  context.constraints,
@@ -58,6 +60,7 @@ func resetFile(pkg *packages.Package, structs []*types.Named, context *generatio
 type fileEmitter struct {
 	pkg          *packages.Package
 	marked       map[*types.TypeName]bool
+	traversal    map[*types.TypeName]bool
 	names        nameAllocator
 	helpers      resetHelpers
 	declarations map[string]bool
@@ -87,27 +90,25 @@ func (e *fileEmitter) emitStruct(n *types.Named) error {
 		receiverType = instance.(*types.Named)
 	}
 
-	visited := e.names.take("resetVisited")
-	original := e.names.take("resetOriginal")
-	seen := e.names.take("resetSeen")
-	receiver := types.TypeString(receiverType, types.RelativeTo(e.pkg.Types))
 	method := resetMethodContext{
 		receiverName: recv,
-		receiverType: receiver,
-		visited:      visited,
-		original:     original,
-		seen:         seen,
+		receiverType: types.TypeString(receiverType, types.RelativeTo(e.pkg.Types)),
 	}
-	e.emitResetMethod(name, method)
-	e.emitResetWithVisitedMethod(method)
+	if e.traversal[n.Obj()] {
+		method.visited = e.names.take("resetVisited")
+		method.original = e.names.take("resetOriginal")
+		method.seen = e.names.take("resetSeen")
+	}
 	statements := statementEmitter{
 		marked:       e.marked,
+		traversal:    e.traversal,
 		names:        e.names,
 		helpers:      &e.helpers,
 		declarations: e.declarations,
 		constraints:  e.constraints,
-		visited:      visited,
+		visited:      method.visited,
 	}
+	var fields bytes.Buffer
 	for f := range receiverType.Underlying().(*types.Struct).Fields() {
 		if f.Name() == "_" {
 			continue
@@ -122,9 +123,12 @@ func (e *fileEmitter) emitStruct(n *types.Named) error {
 		if err != nil {
 			return fmt.Errorf("%s.%s: %w", name, f.Name(), err)
 		}
-		fmt.Fprintln(&e.body, stmt)
+		fmt.Fprintln(&fields, stmt)
 	}
-	e.body.WriteString("}\n\n")
+	e.emitResetMethod(name, method, fields.Bytes())
+	if method.visited != "" {
+		e.emitResetWithVisitedMethod(method, fields.Bytes())
+	}
 	var used []int
 	for i := 0; i < receiverType.TypeArgs().Len(); i++ {
 		if param, ok := receiverType.TypeArgs().At(i).(*types.TypeParam); ok && e.helpers.parameters[param] {
@@ -143,15 +147,20 @@ type resetMethodContext struct {
 	seen         string
 }
 
-func (e *fileEmitter) emitResetMethod(name string, method resetMethodContext) {
+func (e *fileEmitter) emitResetMethod(name string, method resetMethodContext, fields []byte) {
 	fmt.Fprintf(&e.body, "// Reset сбрасывает %s к начальному состоянию.\n", name)
 	fmt.Fprintf(&e.body, "func (%s *%s) %s() {\n", method.receiverName, method.receiverType, resetMethodName)
 	fmt.Fprintf(&e.body, "if %s == nil {\nreturn\n}\n", method.receiverName)
-	fmt.Fprintf(&e.body, "%s.%s(map[interface{}]struct{}{}, %s)\n", method.receiverName, resetWithVisitedMethodName, method.receiverName)
+	if method.visited != "" {
+		fmt.Fprintf(&e.body, "%s.%s(map[interface{}]struct{}{}, %s)\n}\n\n",
+			method.receiverName, resetWithVisitedMethodName, method.receiverName)
+		return
+	}
+	e.body.Write(fields)
 	e.body.WriteString("}\n\n")
 }
 
-func (e *fileEmitter) emitResetWithVisitedMethod(method resetMethodContext) {
+func (e *fileEmitter) emitResetWithVisitedMethod(method resetMethodContext, fields []byte) {
 	e.body.WriteString("// ResetWithVisited продолжает сброс с общей картой посещённых объектов.\n")
 	e.body.WriteString("// original сохраняет вызов пользовательского Reset при встраивании типа.\n")
 	e.body.WriteString("// Тип необязательного параметра отличает собственный протокол от унаследованного.\n")
@@ -165,6 +174,8 @@ func (e *fileEmitter) emitResetWithVisitedMethod(method resetMethodContext) {
 	fmt.Fprintf(&e.body, "if %s == nil {\n%s = map[interface{}]struct{}{}\n}\n", method.visited, method.visited)
 	fmt.Fprintf(&e.body, "if _, %s := %s[%s]; %s {\nreturn\n}\n", method.seen, method.visited, method.receiverName, method.seen)
 	fmt.Fprintf(&e.body, "%s[%s] = struct{}{}\n\n", method.visited, method.receiverName)
+	e.body.Write(fields)
+	e.body.WriteString("}\n\n")
 }
 
 func (e *fileEmitter) source() ([]byte, error) {
@@ -186,37 +197,47 @@ func (e *fileEmitter) source() ([]byte, error) {
 	return imports.Process("", src.Bytes(), opt)
 }
 
-func (e *fileEmitter) emitResetValueHelper(reflectName string) {
-	fmt.Fprintf(&e.body, `func %[1]s(value interface{ %[3]s() }, visited map[interface{}]struct{}) {
+const resetValueHelperTemplate = `func {{helper}}(value interface{ {{reset}}() }, visited map[interface{}]struct{}) {
 if value == nil {
 return
 }
-v := %[2]s.ValueOf(value)
+v := {{reflect}}.ValueOf(value)
 switch v.Kind() {
-case %[2]s.Chan, %[2]s.Func, %[2]s.Map, %[2]s.Pointer, %[2]s.Slice:
+case {{reflect}}.Chan, {{reflect}}.Func, {{reflect}}.Map, {{reflect}}.Pointer, {{reflect}}.Slice:
 if v.IsNil() {
 return
 }
 }
 if resetter, ok := value.(interface {
-%[4]s(map[interface{}]struct{}, interface{ %[3]s() })
+{{resetWithVisited}}(map[interface{}]struct{}, interface{ {{reset}}() })
 }); ok {
-resetter.%[4]s(visited, value)
+resetter.{{resetWithVisited}}(visited, value)
 return
 }
-if method := v.MethodByName("%[4]s"); method.IsValid() {
+if method := v.MethodByName("{{resetWithVisited}}"); method.IsValid() {
 signature := method.Type()
 if signature.NumIn() == 3 && signature.NumOut() == 0 && signature.IsVariadic() &&
-signature.In(0) == %[2]s.TypeFor[map[interface{}]struct{}]() &&
-signature.In(1) == %[2]s.TypeFor[interface{ %[3]s() }]() &&
-signature.In(2) == %[2]s.SliceOf(v.Type()) {
-method.Call([]%[2]s.Value{%[2]s.ValueOf(visited), v})
+signature.In(0) == {{reflect}}.TypeFor[map[interface{}]struct{}]() &&
+signature.In(1) == {{reflect}}.TypeFor[interface{ {{reset}}() }]() &&
+signature.In(2) == {{reflect}}.SliceOf(v.Type()) {
+method.Call([]{{reflect}}.Value{{{reflect}}.ValueOf(visited), v})
 return
 }
 }
-value.%[3]s()
+value.{{reset}}()
 }
-`, e.helpers.value, reflectName, resetMethodName, resetWithVisitedMethodName)
+`
+
+var resetValueHelperBase = strings.NewReplacer(
+	"{{reset}}", resetMethodName,
+	"{{resetWithVisited}}", resetWithVisitedMethodName,
+).Replace(resetValueHelperTemplate)
+
+func (e *fileEmitter) emitResetValueHelper(reflectName string) {
+	e.body.WriteString(strings.NewReplacer(
+		"{{helper}}", e.helpers.value,
+		"{{reflect}}", reflectName,
+	).Replace(resetValueHelperBase))
 }
 
 type nameAllocator map[string]bool
