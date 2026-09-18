@@ -29,6 +29,7 @@ import (
 	"github.com/shigabutdinoff/metrics/internal/handlers/middleware/reqbody"
 	"github.com/shigabutdinoff/metrics/internal/model/metrics"
 	"github.com/shigabutdinoff/metrics/internal/storage"
+	"github.com/shigabutdinoff/metrics/pkg/jsonconfig"
 	"github.com/shigabutdinoff/metrics/pkg/rsacrypt"
 )
 
@@ -117,6 +118,39 @@ func TestServer_Run(t *testing.T) {
 
 		require.ErrorIs(t, s.Run(), os.ErrNotExist)
 	})
+}
+
+func TestServer_ConfigFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "server.json")
+	data := `{
+		"address": "localhost:8081",
+		"restore": false,
+		"store_interval": "1s",
+		"store_file": "/path/to/file.db",
+		"database_dsn": "postgres://localhost/metrics",
+		"crypto_key": "/path/to/key.pem",
+		"key": "secret",
+		"audit_file": "/path/to/audit.log",
+		"audit_url": "http://localhost:9000/audit",
+		"pprof_address": "localhost:6060",
+		"database": {}
+	}`
+	require.NoError(t, os.WriteFile(path, []byte(data), 0o644))
+
+	s := New(storage.NewMemStorage(), zap.NewNop())
+	require.NoError(t, jsonconfig.Load(path, s))
+
+	require.Equal(t, "localhost:8081", s.Address)
+	require.False(t, s.Restore)
+	require.Equal(t, jsonconfig.Seconds(1), s.StoreInterval)
+	require.Equal(t, "/path/to/file.db", s.FileStoragePath)
+	require.Equal(t, "postgres://localhost/metrics", s.DatabaseDSN)
+	require.Equal(t, "/path/to/key.pem", s.CryptoKey)
+	require.Equal(t, "secret", s.Key)
+	require.Equal(t, "/path/to/audit.log", s.AuditFile)
+	require.Equal(t, "http://localhost:9000/audit", s.AuditURL)
+	require.Equal(t, "localhost:6060", s.PprofAddress)
+	require.Nil(t, s.Database)
 }
 
 func TestGzipCompression(t *testing.T) {

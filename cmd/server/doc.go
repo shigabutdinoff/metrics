@@ -12,4 +12,5 @@
 //	-audit-file             путь к файлу аудита
 //	-audit-url              адрес приёмника аудита
 //	-pprof-address          адрес сервера pprof, пустой отключает его
+//	-c, -config             путь к JSON-файлу конфигурации
 package main

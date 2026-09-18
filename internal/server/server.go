@@ -34,6 +34,7 @@ import (
 	"github.com/shigabutdinoff/metrics/internal/service/mservice"
 	"github.com/shigabutdinoff/metrics/internal/service/persistent"
 	"github.com/shigabutdinoff/metrics/internal/storage"
+	"github.com/shigabutdinoff/metrics/pkg/jsonconfig"
 	"github.com/shigabutdinoff/metrics/pkg/rsacrypt"
 )
 
@@ -64,37 +65,37 @@ const (
 // Server HTTP-сервер метрик, поля с тегом env читаются из окружения.
 type Server struct {
 	// Storage хранилище метрик.
-	Storage storage.Storage
+	Storage storage.Storage `json:"-"`
 	// Address адрес, на котором сервер слушает HTTP, флаг -a.
-	Address string `env:"ADDRESS"`
+	Address string `env:"ADDRESS" json:"address"`
 	// Router маршрутизатор, собирается при вызове Run.
-	Router *chi.Mux
+	Router *chi.Mux `json:"-"`
 	// Logger журнал, куда пишутся запросы и ошибки.
-	Logger *zap.Logger
+	Logger *zap.Logger `json:"-"`
 	// StoreInterval период сохранения в файл в секундах, флаг -i, 0 синхронно.
-	StoreInterval int `env:"STORE_INTERVAL"`
+	StoreInterval jsonconfig.Seconds `env:"STORE_INTERVAL" json:"store_interval"`
 	// FileStoragePath путь к файлу с метриками, флаг -f.
-	FileStoragePath string `env:"FILE_STORAGE_PATH"`
+	FileStoragePath string `env:"FILE_STORAGE_PATH" json:"store_file"`
 	// Restore восстанавливать ли метрики из файла при старте, флаг -r.
-	Restore bool `env:"RESTORE"`
+	Restore bool `env:"RESTORE" json:"restore"`
 	// DatabaseDSN строка подключения к PostgreSQL, флаг -d.
-	DatabaseDSN string `env:"DATABASE_DSN"`
+	DatabaseDSN string `env:"DATABASE_DSN" json:"database_dsn"`
 	// Key ключ подписи HMAC-SHA256, флаг -k.
-	Key string `env:"KEY"`
+	Key string `env:"KEY" json:"key"`
 	// CryptoKey путь к файлу с приватным ключом RSA, флаг -crypto-key.
-	CryptoKey string `env:"CRYPTO_KEY"`
+	CryptoKey string `env:"CRYPTO_KEY" json:"crypto_key"`
 	// AuditFile путь к файлу аудита, флаг -audit-file.
-	AuditFile string `env:"AUDIT_FILE"`
+	AuditFile string `env:"AUDIT_FILE" json:"audit_file"`
 	// AuditURL адрес приёмника аудита, флаг -audit-url.
-	AuditURL string `env:"AUDIT_URL"`
+	AuditURL string `env:"AUDIT_URL" json:"audit_url"`
 	// PprofAddress адрес отдельного сервера pprof, флаг -pprof-address.
-	PprofAddress string `env:"PPROF_ADDRESS"`
+	PprofAddress string `env:"PPROF_ADDRESS" json:"pprof_address"`
 	auditor      *audit.Publisher
 	auditClosers []io.Closer
 	onChange     func()
 	privateKey   *rsa.PrivateKey
 	// Database соединение с PostgreSQL, открывается при непустом DatabaseDSN.
-	Database *sql.DB
+	Database *sql.DB `json:"-"`
 }
 
 // New создаёт сервер с настройками по умолчанию, роутер собирает Run.
