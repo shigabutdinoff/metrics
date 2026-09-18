@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"flag"
@@ -17,15 +18,17 @@ import (
 	config "github.com/shigabutdinoff/metrics/internal/config/agent"
 	"github.com/shigabutdinoff/metrics/internal/storage"
 	"github.com/shigabutdinoff/metrics/pkg/buildinfo"
+	"github.com/shigabutdinoff/metrics/pkg/jsonconfig"
 )
 
 var (
-	address           = flag.String("address", string(config.DefaultAddress), "HTTP server endpoint address")
-	reportIntervalSec = flag.Int64("report-interval", int64(config.DefaultReportInterval), "report interval in seconds")
-	pollIntervalSec   = flag.Int64("poll-interval", int64(config.DefaultPollInterval), "poll interval in seconds")
+	address           = flag.String("address", string(config.DefaultAddress), "Адрес сервера метрик")
+	reportIntervalSec = flag.Int64("report-interval", int64(config.DefaultReportInterval), "Период отправки метрик в секундах")
+	pollIntervalSec   = flag.Int64("poll-interval", int64(config.DefaultPollInterval), "Период снятия метрик в секундах")
 	key               = flag.String("key", "", "Секретный ключ для подписи")
 	cryptoKey         = flag.String("crypto-key", "", "Путь к файлу с публичным ключом")
-	rateLimit         = flag.Int64("rate-limit", int64(config.DefaultRateLimit), "max concurrent outgoing requests")
+	rateLimit         = flag.Int64("rate-limit", int64(config.DefaultRateLimit), "Число одновременных запросов к серверу")
+	configFile        = flag.String("config", "", "Путь к JSON-файлу конфигурации")
 )
 
 var (
@@ -35,11 +38,12 @@ var (
 )
 
 func init() {
-	flag.StringVar(address, "a", string(config.DefaultAddress), "HTTP server endpoint address (shorthand)")
-	flag.Int64Var(reportIntervalSec, "r", int64(config.DefaultReportInterval), "report interval in seconds (shorthand)")
-	flag.Int64Var(pollIntervalSec, "p", int64(config.DefaultPollInterval), "poll interval in seconds (shorthand)")
+	flag.StringVar(address, "a", string(config.DefaultAddress), "Адрес сервера метрик (shorthand)")
+	flag.Int64Var(reportIntervalSec, "r", int64(config.DefaultReportInterval), "Период отправки метрик в секундах (shorthand)")
+	flag.Int64Var(pollIntervalSec, "p", int64(config.DefaultPollInterval), "Период снятия метрик в секундах (shorthand)")
 	flag.StringVar(key, "k", "", "Секретный ключ для подписи (shorthand)")
-	flag.Int64Var(rateLimit, "l", int64(config.DefaultRateLimit), "max concurrent outgoing requests (shorthand)")
+	flag.Int64Var(rateLimit, "l", int64(config.DefaultRateLimit), "Число одновременных запросов к серверу (shorthand)")
+	flag.StringVar(configFile, "c", "", "Путь к JSON-файлу конфигурации (shorthand)")
 }
 
 func main() {
@@ -55,6 +59,12 @@ func main() {
 
 	st := storage.NewMemStorage()
 	a := agent.New(st, logger)
+
+	if path := cmp.Or(*configFile, os.Getenv("CONFIG")); path != "" {
+		if err = jsonconfig.Load(path, &a.Config); err != nil {
+			logger.Fatal("Не удалось прочитать файл конфигурации", zap.String("path", path), zap.Error(err))
+		}
+	}
 
 	if err = env.Parse(&a); err != nil {
 		logger.Error("Не удалось распарить окружение", zap.Error(err))
