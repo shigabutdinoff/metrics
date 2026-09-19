@@ -88,7 +88,7 @@ func (a *Agent) workerCount() int {
 	return 1
 }
 
-// Run запускает агент
+// Run собирает и шлёт метрики до отмены ctx, затем досылает очередь.
 func (a *Agent) Run(ctx context.Context) error {
 	if a.CryptoKey != "" {
 		pub, err := rsacrypt.LoadPublicKey(a.CryptoKey)
@@ -102,11 +102,13 @@ func (a *Agent) Run(ctx context.Context) error {
 	jobs := make(chan []metrics.Metrics, workers)
 
 	g, gctx := errgroup.WithContext(ctx)
+	// Отмена ctx не рвёт отправку: воркеры досылают запросы и очередь.
+	sendCtx := context.WithoutCancel(ctx)
 
 	for i := 0; i < workers; i++ {
 		g.Go(func() error {
 			for batch := range jobs {
-				if err := a.sendMetrics(gctx, batch); err != nil {
+				if err := a.sendMetrics(sendCtx, batch); err != nil {
 					a.Logger.Warn("Ошибка отправки метрик", zap.Error(err))
 				}
 			}
@@ -163,11 +165,8 @@ func (a *Agent) reportLoop(ctx context.Context, jobs chan<- []metrics.Metrics) {
 			if len(batch) == 0 {
 				continue
 			}
-			select {
-			case jobs <- batch:
-			case <-ctx.Done():
-				return
-			}
+			// Собранная пачка уже в обработке, воркеры читают jobs до close.
+			jobs <- batch
 		}
 	}
 }

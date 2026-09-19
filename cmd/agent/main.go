@@ -91,12 +91,13 @@ func main() {
 		}
 	})
 
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT, syscall.SIGQUIT)
 	defer stop()
 
 	if err = a.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
 		logger.Fatal("Агент остановлен с ошибкой", zap.Error(err))
 	}
+	logger.Info("Агент остановлен")
 }
 
 func normalizeAddress(address string) string {

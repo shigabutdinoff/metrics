@@ -445,3 +445,72 @@ func TestAgent_Run_BadCryptoKey(t *testing.T) {
 		t.Fatal("ожидалась ошибка загрузки публичного ключа")
 	}
 }
+
+func TestAgent_Run_DeliversQueueAfterCancel(t *testing.T) {
+	started := make(chan struct{}, 1)
+	release := make(chan struct{})
+	var delivered, aborted atomic.Int64
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Обрыв соединения сервер замечает только после вычитанного тела.
+		_, _ = io.Copy(io.Discard, r.Body)
+		select {
+		case started <- struct{}{}:
+		default:
+		}
+		select {
+		case <-release:
+			delivered.Add(1)
+			w.WriteHeader(http.StatusOK)
+		case <-r.Context().Done():
+			aborted.Add(1)
+		}
+	}))
+	defer ts.Close()
+
+	st := storage.NewMemStorage()
+	v := 1.0
+	st.SetGauge(t.Context(), "g", &v)
+
+	a := &Agent{
+		Storage:        st,
+		Client:         resty.NewWithClient(ts.Client()),
+		Config:         config.Config{Address: config.Address(ts.URL), RateLimitInt64: 1},
+		PollInterval:   time.Hour,
+		ReportInterval: 10 * time.Millisecond,
+		Logger:         zap.NewNop(),
+	}
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() { errCh <- a.Run(ctx) }()
+
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("первый запрос не начался")
+	}
+	// Воркер занят первым запросом: вторая пачка в очереди, третья ждёт места.
+	time.Sleep(100 * time.Millisecond)
+	cancel()
+	// Отмена успевает дойти до клиента, если отправка от неё зависит.
+	time.Sleep(100 * time.Millisecond)
+	close(release)
+
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatalf("Run() ошибка = %v, ожидается nil", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Run не завершился после отмены контекста")
+	}
+
+	if got := aborted.Load(); got != 0 {
+		t.Fatalf("оборвано запросов = %d, ожидается 0", got)
+	}
+	if got := delivered.Load(); got < 3 {
+		t.Fatalf("доставлено запросов = %d, ожидается не меньше 3", got)
+	}
+}
