@@ -17,6 +17,7 @@ import (
 	_ "github.com/golang-migrate/migrate/v4/database/postgres"
 	_ "github.com/golang-migrate/migrate/v4/source/file"
 	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/shigabutdinoff/metrics/internal/audit"
 	"github.com/shigabutdinoff/metrics/internal/handlers/middleware/auditmw"
@@ -62,6 +63,8 @@ const (
 	DefaultPprofAddress = ""
 )
 
+const defaultShutdownTimeout = 10 * time.Second
+
 // Server HTTP-сервер метрик, поля с тегом env читаются из окружения.
 type Server struct {
 	// Storage хранилище метрик.
@@ -89,11 +92,12 @@ type Server struct {
 	// AuditURL адрес приёмника аудита, флаг -audit-url.
 	AuditURL string `env:"AUDIT_URL" json:"audit_url"`
 	// PprofAddress адрес отдельного сервера pprof, флаг -pprof-address.
-	PprofAddress string `env:"PPROF_ADDRESS" json:"pprof_address"`
-	auditor      *audit.Publisher
-	auditClosers []io.Closer
-	onChange     func()
-	privateKey   *rsa.PrivateKey
+	PprofAddress    string `env:"PPROF_ADDRESS" json:"pprof_address"`
+	auditor         *audit.Publisher
+	auditClosers    []io.Closer
+	onChange        func()
+	privateKey      *rsa.PrivateKey
+	shutdownTimeout time.Duration
 	// Database соединение с PostgreSQL, открывается при непустом DatabaseDSN.
 	Database *sql.DB `json:"-"`
 }
@@ -113,6 +117,7 @@ func New(st storage.Storage, logger *zap.Logger) *Server {
 		AuditFile:       DefaultAuditFile,
 		AuditURL:        DefaultAuditURL,
 		PprofAddress:    DefaultPprofAddress,
+		shutdownTimeout: defaultShutdownTimeout,
 	}
 
 	return s
@@ -156,8 +161,8 @@ func (s *Server) setupRoutes() {
 	s.Router = r
 }
 
-// Run настраивает сервер и обслуживает запросы до ошибки.
-func (s *Server) Run() error {
+// Run обслуживает запросы до отмены ctx, затем сохраняет метрики.
+func (s *Server) Run(ctx context.Context) error {
 	if s.CryptoKey != "" {
 		key, err := rsacrypt.LoadPrivateKey(s.CryptoKey)
 		if err != nil {
@@ -202,7 +207,44 @@ func (s *Server) Run() error {
 		}()
 	}
 
-	return http.ListenAndServe(s.Address, s.Router)
+	return s.serve(ctx, ps)
+}
+
+func (s *Server) serve(ctx context.Context, ps *persistent.Service) error {
+	srv := &http.Server{Addr: s.Address, Handler: s.Router}
+
+	g, gctx := errgroup.WithContext(ctx)
+	g.Go(func() error {
+		if err := srv.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
+			return err
+		}
+		return nil
+	})
+	g.Go(func() error {
+		<-gctx.Done()
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), s.shutdownTimeout)
+		defer cancel()
+		if err := srv.Shutdown(shutdownCtx); err != nil {
+			s.Logger.Warn("Не удалось штатно остановить сервер", zap.Error(err))
+			_ = srv.Close()
+		}
+		return nil
+	})
+	if s.StoreInterval > 0 {
+		g.Go(func() error {
+			s.saveLoop(gctx, ps)
+			return nil
+		})
+	}
+	if err := g.Wait(); err != nil {
+		return err
+	}
+
+	if err := s.save(ps); err != nil {
+		return fmt.Errorf("сохранение метрик при остановке: %w", err)
+	}
+	s.Logger.Info("Сервер остановлен")
+	return nil
 }
 
 func pprofHandler() http.Handler {
@@ -246,40 +288,43 @@ func (s *Server) initDatabaseOrRestore(ps *persistent.Service) error {
 }
 
 func (s *Server) configurePersistence(ps *persistent.Service) {
-	if s.StoreInterval <= 0 {
-		s.onChange = func() {
-			if s.Database != nil {
-				ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-				defer cancel()
-				if err := s.saveToDB(ctx); err != nil {
-					s.Logger.Warn("Не удалось сохранить метрики в БД (sync)", zap.Error(err))
-				}
-			} else if s.FileStoragePath != "" {
-				if err := s.saveToFile(ps); err != nil {
-					s.Logger.Warn("Не удалось сохранить метрики в файл (sync)", zap.Error(err))
-				}
-			}
-		}
+	if s.StoreInterval > 0 {
 		return
 	}
 
+	s.onChange = func() {
+		if err := s.save(ps); err != nil {
+			s.Logger.Warn("Не удалось сохранить метрики (sync)", zap.Error(err))
+		}
+	}
+}
+
+func (s *Server) saveLoop(ctx context.Context, ps *persistent.Service) {
 	ticker := time.NewTicker(time.Duration(s.StoreInterval) * time.Second)
-	go func() {
-		defer ticker.Stop()
-		for range ticker.C {
-			if s.Database != nil {
-				ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-				if err := s.saveToDB(ctx); err != nil {
-					s.Logger.Warn("Не удалось сохранить метрики в БД (tick)", zap.Error(err))
-				}
-				cancel()
-			} else if s.FileStoragePath != "" {
-				if err := s.saveToFile(ps); err != nil {
-					s.Logger.Warn("Не удалось сохранить метрики в файл (tick)", zap.Error(err))
-				}
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := s.save(ps); err != nil {
+				s.Logger.Warn("Не удалось сохранить метрики (tick)", zap.Error(err))
 			}
 		}
-	}()
+	}
+}
+
+func (s *Server) save(ps *persistent.Service) error {
+	if s.Database != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		return s.saveToDB(ctx)
+	}
+	if s.FileStoragePath != "" {
+		return s.saveToFile(ps)
+	}
+	return nil
 }
 
 func (s *Server) saveToDB(ctx context.Context) error {

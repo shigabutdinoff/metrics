@@ -2,10 +2,13 @@ package main
 
 import (
 	"cmp"
+	"context"
 	"flag"
 	"fmt"
 	"log"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/caarlos0/env/v11"
 	"go.uber.org/zap"
@@ -101,5 +104,8 @@ func run() error {
 		return fmt.Errorf("разбор окружения: %w", err)
 	}
 
-	return s.Run()
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT, syscall.SIGQUIT)
+	defer stop()
+
+	return s.Run(ctx)
 }
