@@ -16,4 +16,7 @@
 // Маршруты text/plain и application/json разведены по группам с проверкой
 // Content-Type. К обеим группам подключены распаковка и сжатие gzip,
 // а также проверка подписи HMAC-SHA256, если задан Server.Key.
+//
+// На адресе Server.GRPCAddress сервер обслуживает сервис gRPC Metrics.
+// Пустой адрес отключает gRPC.
 package server

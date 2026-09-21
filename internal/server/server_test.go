@@ -27,12 +27,18 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest/observer"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
 
 	"github.com/shigabutdinoff/metrics/internal/audit"
 	"github.com/shigabutdinoff/metrics/internal/handlers/middleware/compress"
 	"github.com/shigabutdinoff/metrics/internal/handlers/middleware/reqbody"
 	"github.com/shigabutdinoff/metrics/internal/handlers/middleware/trustedsubnet"
 	"github.com/shigabutdinoff/metrics/internal/model/metrics"
+	pb "github.com/shigabutdinoff/metrics/internal/proto"
 	"github.com/shigabutdinoff/metrics/internal/service/persistent"
 	"github.com/shigabutdinoff/metrics/internal/storage"
 	"github.com/shigabutdinoff/metrics/pkg/jsonconfig"
@@ -56,6 +62,9 @@ func TestNew(t *testing.T) {
 	}
 	if s.Address != DefaultAddress {
 		t.Fatalf("New() адрес = %q, ожидается %q", s.Address, DefaultAddress)
+	}
+	if s.GRPCAddress != DefaultGRPCAddress {
+		t.Fatalf("New() адрес gRPC = %q, ожидается %q", s.GRPCAddress, DefaultGRPCAddress)
 	}
 	if s.Router == nil {
 		t.Fatalf("setupRoutes() роутер равен nil")
@@ -162,6 +171,10 @@ func runServer(t *testing.T, s *Server) (context.CancelFunc, <-chan error) {
 	t.Helper()
 
 	s.Address = freeAddr(t)
+	s.GRPCAddress = freeAddr(t)
+	for s.GRPCAddress == s.Address {
+		s.GRPCAddress = freeAddr(t)
+	}
 	ctx, cancel := context.WithCancel(t.Context())
 
 	errCh := make(chan error, 1)
@@ -398,6 +411,108 @@ func TestServer_Run_ListenErrorKeepsFile(t *testing.T) {
 	require.Equal(t, saved, string(got))
 }
 
+func TestServer_Run_GRPCListenError(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	defer ln.Close()
+
+	s := newFileServer(t, 3600)
+	s.Address = freeAddr(t)
+	s.GRPCAddress = ln.Addr().String()
+	saved := `[{"id":"temp","type":"gauge","value":12.5}]`
+	require.NoError(t, os.WriteFile(s.FileStoragePath, []byte(saved), 0o644))
+
+	require.ErrorContains(t, s.Run(t.Context()), "прослушивание gRPC")
+
+	got, err := os.ReadFile(s.FileStoragePath)
+	require.NoError(t, err)
+	require.Equal(t, saved, string(got))
+}
+
+func dialGRPC(t *testing.T, addr string) pb.MetricsClient {
+	t.Helper()
+	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = conn.Close() })
+	return pb.NewMetricsClient(conn)
+}
+
+func gaugeRequest() *pb.UpdateMetricsRequest {
+	return pb.UpdateMetricsRequest_builder{Metrics: []*pb.Metric{
+		pb.Metric_builder{Id: "Alloc", Type: pb.Metric_GAUGE, Value: 1.5}.Build(),
+	}}.Build()
+}
+
+func TestServer_Run_GRPC(t *testing.T) {
+	s := newFileServer(t, 0)
+	s.TrustedSubnet = "192.168.0.0/24"
+	s.AuditFile = filepath.Join(t.TempDir(), "audit.log")
+	cancel, errCh := runServer(t, s)
+
+	client := dialGRPC(t, s.GRPCAddress)
+	update := func(ip string) error {
+		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+		defer cancel()
+		ctx = metadata.NewOutgoingContext(ctx, metadata.Pairs("x-real-ip", ip))
+		_, err := client.UpdateMetrics(ctx, gaugeRequest(), grpc.WaitForReady(true))
+		return err
+	}
+
+	require.Equal(t, codes.PermissionDenied, status.Code(update("10.0.0.1")))
+	require.Nil(t, s.Storage.GetGauge(t.Context(), "Alloc"))
+
+	require.NoError(t, update("192.168.0.69"))
+	requireSavedGauge(t, s.FileStoragePath, "Alloc", 1.5)
+
+	cancel()
+	require.NoError(t, waitRun(t, errCh))
+
+	events, err := os.ReadFile(s.AuditFile)
+	require.NoError(t, err)
+	require.Contains(t, string(events), `"metrics":["Alloc"]`)
+}
+
+type blockingStorage struct {
+	storage.Storage
+	entered chan struct{}
+	exited  chan struct{}
+}
+
+func (b blockingStorage) SetGauge(ctx context.Context, _ string, _ metrics.GaugeValue) {
+	close(b.entered)
+	<-ctx.Done()
+	time.Sleep(100 * time.Millisecond)
+	close(b.exited)
+}
+
+func TestServer_Run_GRPCShutdownTimeout(t *testing.T) {
+	s := newFileServer(t, 3600)
+	s.shutdownTimeout = 100 * time.Millisecond
+	entered, exited := make(chan struct{}), make(chan struct{})
+	s.Storage = blockingStorage{Storage: s.Storage, entered: entered, exited: exited}
+	core, logs := observer.New(zap.WarnLevel)
+	s.Logger = zap.New(core)
+	cancel, errCh := runServer(t, s)
+
+	client := dialGRPC(t, s.GRPCAddress)
+	rpcErr := make(chan error, 1)
+	go func() {
+		_, err := client.UpdateMetrics(t.Context(), gaugeRequest(), grpc.WaitForReady(true))
+		rpcErr <- err
+	}()
+	<-entered
+
+	cancel()
+	require.NoError(t, waitRun(t, errCh))
+	require.Equal(t, 1, logs.FilterMessageSnippet("Не удалось штатно остановить gRPC").Len())
+	select {
+	case <-exited:
+	default:
+		t.Fatal("Run завершился раньше обработчика gRPC")
+	}
+	require.Error(t, <-rpcErr)
+}
+
 func TestServer_ConfigFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "server.json")
 	data := `{
@@ -412,6 +527,7 @@ func TestServer_ConfigFile(t *testing.T) {
 		"audit_url": "http://localhost:9000/audit",
 		"pprof_address": "localhost:6060",
 		"trusted_subnet": "192.168.0.0/24",
+		"grpc_address": "localhost:3201",
 		"database": {}
 	}`
 	require.NoError(t, os.WriteFile(path, []byte(data), 0o644))
@@ -430,19 +546,24 @@ func TestServer_ConfigFile(t *testing.T) {
 	require.Equal(t, "http://localhost:9000/audit", s.AuditURL)
 	require.Equal(t, "localhost:6060", s.PprofAddress)
 	require.Equal(t, "192.168.0.0/24", s.TrustedSubnet)
+	require.Equal(t, "localhost:3201", s.GRPCAddress)
 	require.Nil(t, s.Database)
 }
 
 func TestServer_Env(t *testing.T) {
 	t.Setenv("TRUSTED_SUBNET", "10.0.0.0/8")
+	t.Setenv("GRPC_ADDRESS", "localhost:3201")
 	s := New(storage.NewMemStorage(), zap.NewNop())
 	require.NoError(t, env.Parse(s))
 	require.Equal(t, "10.0.0.0/8", s.TrustedSubnet)
+	require.Equal(t, "localhost:3201", s.GRPCAddress)
 
 	// Пустые переменные не перекрывают значения флагов и файла.
 	t.Setenv("TRUSTED_SUBNET", "")
+	t.Setenv("GRPC_ADDRESS", "")
 	require.NoError(t, env.Parse(s))
 	require.Equal(t, "10.0.0.0/8", s.TrustedSubnet)
+	require.Equal(t, "localhost:3201", s.GRPCAddress)
 }
 
 func TestRouterTrustedSubnet(t *testing.T) {

@@ -19,6 +19,7 @@ import (
 	_ "github.com/golang-migrate/migrate/v4/source/file"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
+	"google.golang.org/grpc"
 
 	"github.com/shigabutdinoff/metrics/internal/audit"
 	"github.com/shigabutdinoff/metrics/internal/handlers/middleware/auditmw"
@@ -65,6 +66,8 @@ const (
 	DefaultPprofAddress = ""
 	// DefaultTrustedSubnet проверка подсети агентов выключена.
 	DefaultTrustedSubnet = ""
+	// DefaultGRPCAddress сервер gRPC выключен.
+	DefaultGRPCAddress = ""
 )
 
 const defaultShutdownTimeout = 10 * time.Second
@@ -97,6 +100,8 @@ type Server struct {
 	AuditURL string `env:"AUDIT_URL" json:"audit_url"`
 	// PprofAddress адрес отдельного сервера pprof, флаг -pprof-address.
 	PprofAddress string `env:"PPROF_ADDRESS" json:"pprof_address"`
+	// GRPCAddress адрес сервера gRPC, флаг -grpc-address, пустой отключает.
+	GRPCAddress string `env:"GRPC_ADDRESS" json:"grpc_address"`
 	// TrustedSubnet доверенная подсеть агентов в CIDR, флаг -t.
 	TrustedSubnet   string `env:"TRUSTED_SUBNET" json:"trusted_subnet"`
 	auditor         *audit.Publisher
@@ -125,6 +130,7 @@ func New(st storage.Storage, logger *zap.Logger) *Server {
 		AuditURL:        DefaultAuditURL,
 		PprofAddress:    DefaultPprofAddress,
 		TrustedSubnet:   DefaultTrustedSubnet,
+		GRPCAddress:     DefaultGRPCAddress,
 		shutdownTimeout: defaultShutdownTimeout,
 	}
 
@@ -239,6 +245,14 @@ func (s *Server) Run(ctx context.Context) error {
 func (s *Server) serve(ctx context.Context, ps *persistent.Service) error {
 	srv := &http.Server{Addr: s.Address, Handler: s.Router}
 
+	var lis net.Listener
+	if s.GRPCAddress != "" {
+		var err error
+		if lis, err = net.Listen("tcp", s.GRPCAddress); err != nil {
+			return fmt.Errorf("прослушивание gRPC: %w", err)
+		}
+	}
+
 	g, gctx := errgroup.WithContext(ctx)
 	g.Go(func() error {
 		if err := srv.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
@@ -256,6 +270,20 @@ func (s *Server) serve(ctx context.Context, ps *persistent.Service) error {
 		}
 		return nil
 	})
+	if lis != nil {
+		gs := s.grpcServer()
+		g.Go(func() error {
+			if err := gs.Serve(lis); !errors.Is(err, grpc.ErrServerStopped) {
+				return err
+			}
+			return nil
+		})
+		g.Go(func() error {
+			<-gctx.Done()
+			s.stopGRPC(gs)
+			return nil
+		})
+	}
 	if s.StoreInterval > 0 {
 		g.Go(func() error {
 			s.saveLoop(gctx, ps)
