@@ -41,4 +41,6 @@ type Config struct {
 	CryptoKey string `env:"CRYPTO_KEY" json:"crypto_key"`
 	// RateLimitInt64 число одновременных запросов к серверу, флаг -l.
 	RateLimitInt64 RateLimit `env:"RATE_LIMIT" json:"rate_limit"`
+	// GRPCAddress адрес сервера gRPC, флаг -grpc-address, пустой шлёт по HTTP.
+	GRPCAddress string `env:"GRPC_ADDRESS" json:"grpc_address"`
 }

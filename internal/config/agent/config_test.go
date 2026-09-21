@@ -16,7 +16,8 @@ func TestConfig_File(t *testing.T) {
 		"poll_interval": "3s",
 		"crypto_key": "/path/to/key.pem",
 		"key": "secret",
-		"rate_limit": 4
+		"rate_limit": 4,
+		"grpc_address": "localhost:3201"
 	}`
 	if err := os.WriteFile(path, []byte(data), 0o644); err != nil {
 		t.Fatal(err)
@@ -34,6 +35,7 @@ func TestConfig_File(t *testing.T) {
 		Key:                 "secret",
 		CryptoKey:           "/path/to/key.pem",
 		RateLimitInt64:      4,
+		GRPCAddress:         "localhost:3201",
 	}
 	if cfg != want {
 		t.Fatalf("Load() = %+v, ожидается %+v", cfg, want)

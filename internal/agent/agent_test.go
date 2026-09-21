@@ -160,6 +160,45 @@ func TestAgent_Run(t *testing.T) {
 	}
 }
 
+func TestAgent_Run_GRPC(t *testing.T) {
+	var httpRequests atomic.Int64
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		httpRequests.Add(1)
+	}))
+	defer ts.Close()
+	f := &fakeMetricsServer{}
+	core, logs := observer.New(zap.WarnLevel)
+	a := &Agent{
+		Storage:        storage.NewMemStorage(),
+		Client:         resty.NewWithClient(ts.Client()),
+		Config:         config.Config{Address: config.Address(ts.URL), GRPCAddress: startGRPC(t, f), Key: "k"},
+		PollInterval:   20 * time.Millisecond,
+		ReportInterval: 50 * time.Millisecond,
+		Logger:         zap.New(core),
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 300*time.Millisecond)
+	defer cancel()
+
+	if err := a.Run(ctx); err != nil {
+		t.Fatalf("Run() ошибка = %v", err)
+	}
+
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.reqs) == 0 {
+		t.Fatal("ни одной пачки по gRPC не отправлено")
+	}
+	if !slices.Equal(f.realIPs[0], []string{"127.0.0.1"}) {
+		t.Fatalf("x-real-ip = %q, ожидается 127.0.0.1", f.realIPs[0])
+	}
+	if n := httpRequests.Load(); n != 0 {
+		t.Fatalf("запросов по HTTP = %d, ожидается 0", n)
+	}
+	if n := logs.FilterMessageSnippet("Подпись и шифрование по gRPC не применяются").Len(); n != 1 {
+		t.Fatalf("предупреждений о подписи = %d, ожидается 1", n)
+	}
+}
+
 func TestAgent_CollectGopsutilMetrics(t *testing.T) {
 	st := storage.NewMemStorage()
 	a := &Agent{Storage: st, Logger: zap.NewNop()}
@@ -304,18 +343,24 @@ func TestAgent_SendMetrics_RealIP(t *testing.T) {
 func TestHostIP(t *testing.T) {
 	tests := []struct {
 		name    string
-		address string
+		cfg     config.Config
 		want    string
 		wantErr bool
 	}{
-		{name: "адрес с портом", address: "http://127.0.0.1:8080", want: "127.0.0.1"},
-		{name: "адрес без порта", address: "http://127.0.0.1", want: "127.0.0.1"},
-		{name: "localhost", address: "http://localhost:8080", want: "127.0.0.1"},
-		{name: "неразбираемый адрес", address: "http://[::1", wantErr: true},
+		{name: "адрес с портом", cfg: config.Config{Address: "http://127.0.0.1:8080"}, want: "127.0.0.1"},
+		{name: "адрес без порта", cfg: config.Config{Address: "http://127.0.0.1"}, want: "127.0.0.1"},
+		{name: "localhost", cfg: config.Config{Address: "http://localhost:8080"}, want: "127.0.0.1"},
+		{name: "неразбираемый адрес", cfg: config.Config{Address: "http://[::1"}, wantErr: true},
+		{name: "адрес gRPC", cfg: config.Config{Address: "http://[::1", GRPCAddress: "127.0.0.1:3200"}, want: "127.0.0.1"},
+		{name: "адрес gRPC со схемой", cfg: config.Config{GRPCAddress: "dns:///127.0.0.1:3200"}, want: "127.0.0.1"},
+		{name: "адрес gRPC без порта", cfg: config.Config{GRPCAddress: "127.0.0.1"}, want: "127.0.0.1"},
+		{name: "адрес gRPC со схемой без слешей", cfg: config.Config{GRPCAddress: "dns:127.0.0.1:3200"}, want: "127.0.0.1"},
+		{name: "адрес gRPC в скобках без порта", cfg: config.Config{GRPCAddress: "[127.0.0.1]"}, want: "127.0.0.1"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ip, err := hostIP(t.Context(), tt.address)
+			a := &Agent{Config: tt.cfg}
+			ip, err := a.hostIP(t.Context())
 			if tt.wantErr {
 				if err == nil {
 					t.Fatalf("hostIP() = %v, ожидается ошибка", ip)
