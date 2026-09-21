@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -26,6 +27,7 @@ import (
 	"github.com/shigabutdinoff/metrics/internal/handlers/middleware/hash"
 	"github.com/shigabutdinoff/metrics/internal/handlers/middleware/logging"
 	"github.com/shigabutdinoff/metrics/internal/handlers/middleware/reqbody"
+	"github.com/shigabutdinoff/metrics/internal/handlers/middleware/trustedsubnet"
 	"github.com/shigabutdinoff/metrics/internal/handlers/route/healthcheck"
 	"github.com/shigabutdinoff/metrics/internal/handlers/route/metrics"
 	"github.com/shigabutdinoff/metrics/internal/handlers/route/update"
@@ -61,6 +63,8 @@ const (
 	DefaultAuditURL = ""
 	// DefaultPprofAddress сервер pprof выключен.
 	DefaultPprofAddress = ""
+	// DefaultTrustedSubnet проверка подсети агентов выключена.
+	DefaultTrustedSubnet = ""
 )
 
 const defaultShutdownTimeout = 10 * time.Second
@@ -92,11 +96,14 @@ type Server struct {
 	// AuditURL адрес приёмника аудита, флаг -audit-url.
 	AuditURL string `env:"AUDIT_URL" json:"audit_url"`
 	// PprofAddress адрес отдельного сервера pprof, флаг -pprof-address.
-	PprofAddress    string `env:"PPROF_ADDRESS" json:"pprof_address"`
+	PprofAddress string `env:"PPROF_ADDRESS" json:"pprof_address"`
+	// TrustedSubnet доверенная подсеть агентов в CIDR, флаг -t.
+	TrustedSubnet   string `env:"TRUSTED_SUBNET" json:"trusted_subnet"`
 	auditor         *audit.Publisher
 	auditClosers    []io.Closer
 	onChange        func()
 	privateKey      *rsa.PrivateKey
+	trustedNet      *net.IPNet
 	shutdownTimeout time.Duration
 	// Database соединение с PostgreSQL, открывается при непустом DatabaseDSN.
 	Database *sql.DB `json:"-"`
@@ -117,6 +124,7 @@ func New(st storage.Storage, logger *zap.Logger) *Server {
 		AuditFile:       DefaultAuditFile,
 		AuditURL:        DefaultAuditURL,
 		PprofAddress:    DefaultPprofAddress,
+		TrustedSubnet:   DefaultTrustedSubnet,
 		shutdownTimeout: defaultShutdownTimeout,
 	}
 
@@ -126,6 +134,16 @@ func New(st storage.Storage, logger *zap.Logger) *Server {
 func (s *Server) setupRoutes() {
 	r := chi.NewRouter()
 	r.Use(logging.WithLogging(s.Logger))
+	r.Use(func(next http.Handler) http.Handler {
+		checked := trustedsubnet.Middleware(s.trustedNet, s.Logger)(next)
+		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			if req.Method == http.MethodPost && strings.HasPrefix(req.URL.Path, "/update") {
+				checked.ServeHTTP(w, req)
+				return
+			}
+			next.ServeHTTP(w, req)
+		})
+	})
 	r.Use(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 			next.ServeHTTP(w, req)
@@ -169,6 +187,14 @@ func (s *Server) Run(ctx context.Context) error {
 			return fmt.Errorf("загрузка приватного ключа: %w", err)
 		}
 		s.privateKey = key
+	}
+
+	if s.TrustedSubnet != "" {
+		_, subnet, err := net.ParseCIDR(s.TrustedSubnet)
+		if err != nil {
+			return fmt.Errorf("доверенная подсеть: %w", err)
+		}
+		s.trustedNet = subnet
 	}
 
 	defer s.closeAudit()

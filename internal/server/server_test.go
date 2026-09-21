@@ -23,6 +23,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/caarlos0/env/v11"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest/observer"
@@ -30,6 +31,7 @@ import (
 	"github.com/shigabutdinoff/metrics/internal/audit"
 	"github.com/shigabutdinoff/metrics/internal/handlers/middleware/compress"
 	"github.com/shigabutdinoff/metrics/internal/handlers/middleware/reqbody"
+	"github.com/shigabutdinoff/metrics/internal/handlers/middleware/trustedsubnet"
 	"github.com/shigabutdinoff/metrics/internal/model/metrics"
 	"github.com/shigabutdinoff/metrics/internal/service/persistent"
 	"github.com/shigabutdinoff/metrics/internal/storage"
@@ -121,6 +123,15 @@ func TestServer_Run(t *testing.T) {
 		s.CryptoKey = filepath.Join(t.TempDir(), "missing.pem")
 
 		require.ErrorIs(t, s.Run(t.Context()), os.ErrNotExist)
+	})
+
+	t.Run("возвращает ошибку доверенной подсети", func(t *testing.T) {
+		s := New(storage.NewMemStorage(), zap.NewNop())
+		s.Address = "bad"
+		s.TrustedSubnet = "192.168.0.1"
+
+		var pe *net.ParseError
+		require.ErrorAs(t, s.Run(t.Context()), &pe)
 	})
 }
 
@@ -400,6 +411,7 @@ func TestServer_ConfigFile(t *testing.T) {
 		"audit_file": "/path/to/audit.log",
 		"audit_url": "http://localhost:9000/audit",
 		"pprof_address": "localhost:6060",
+		"trusted_subnet": "192.168.0.0/24",
 		"database": {}
 	}`
 	require.NoError(t, os.WriteFile(path, []byte(data), 0o644))
@@ -417,7 +429,72 @@ func TestServer_ConfigFile(t *testing.T) {
 	require.Equal(t, "/path/to/audit.log", s.AuditFile)
 	require.Equal(t, "http://localhost:9000/audit", s.AuditURL)
 	require.Equal(t, "localhost:6060", s.PprofAddress)
+	require.Equal(t, "192.168.0.0/24", s.TrustedSubnet)
 	require.Nil(t, s.Database)
+}
+
+func TestServer_Env(t *testing.T) {
+	t.Setenv("TRUSTED_SUBNET", "10.0.0.0/8")
+	s := New(storage.NewMemStorage(), zap.NewNop())
+	require.NoError(t, env.Parse(s))
+	require.Equal(t, "10.0.0.0/8", s.TrustedSubnet)
+
+	// Пустые переменные не перекрывают значения флагов и файла.
+	t.Setenv("TRUSTED_SUBNET", "")
+	require.NoError(t, env.Parse(s))
+	require.Equal(t, "10.0.0.0/8", s.TrustedSubnet)
+}
+
+func TestRouterTrustedSubnet(t *testing.T) {
+	_, subnet, err := net.ParseCIDR("192.168.0.0/24")
+	require.NoError(t, err)
+	batch := `[{"id":"Alloc","type":"gauge","value":1}]`
+
+	tests := []struct {
+		name        string
+		subnet      *net.IPNet
+		method      string
+		path        string
+		contentType string
+		body        string
+		realIP      string
+		want        int
+	}{
+		{name: "текстовый update вне подсети", subnet: subnet, method: http.MethodPost, path: "/update/gauge/Sys/3", contentType: "text/plain", realIP: "10.0.0.1", want: http.StatusForbidden},
+		{name: "текстовый update в подсети", subnet: subnet, method: http.MethodPost, path: "/update/gauge/Sys/3", contentType: "text/plain", realIP: "192.168.0.69", want: http.StatusOK},
+		{name: "json update без заголовка", subnet: subnet, method: http.MethodPost, path: "/update/", contentType: "application/json", body: `{"id":"Alloc","type":"gauge","value":1}`, want: http.StatusForbidden},
+		{name: "json пачка вне подсети", subnet: subnet, method: http.MethodPost, path: "/updates/", contentType: "application/json", body: batch, realIP: "10.0.0.1", want: http.StatusForbidden},
+		{name: "пачка вне подсети с чужим Content-Type", subnet: subnet, method: http.MethodPost, path: "/updates/", contentType: "text/plain", body: batch, realIP: "10.0.0.1", want: http.StatusForbidden},
+		{name: "json пачка в подсети", subnet: subnet, method: http.MethodPost, path: "/updates/", contentType: "application/json", body: batch, realIP: "192.168.0.69", want: http.StatusOK},
+		{name: "без подсети пачка без заголовка", method: http.MethodPost, path: "/updates/", contentType: "application/json", body: batch, want: http.StatusOK},
+		{name: "чтение без заголовка", subnet: subnet, method: http.MethodGet, path: "/value/gauge/Sys", want: http.StatusOK},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			st := storage.NewMemStorage()
+			sys := 3.0
+			st.SetGauge(t.Context(), "Sys", &sys)
+			s := New(st, zap.NewNop())
+			s.trustedNet = tt.subnet
+			var changed bool
+			s.onChange = func() { changed = true }
+			s.setupRoutes()
+
+			req := httptest.NewRequest(tt.method, tt.path, strings.NewReader(tt.body))
+			if tt.contentType != "" {
+				req.Header.Set("Content-Type", tt.contentType)
+			}
+			if tt.realIP != "" {
+				req.Header.Set(trustedsubnet.Header, tt.realIP)
+			}
+			rr := httptest.NewRecorder()
+			s.Router.ServeHTTP(rr, req)
+
+			require.Equal(t, tt.want, rr.Code)
+			require.Equal(t, tt.method == http.MethodPost && tt.want == http.StatusOK, changed)
+		})
+	}
 }
 
 func TestGzipCompression(t *testing.T) {

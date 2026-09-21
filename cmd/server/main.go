@@ -30,6 +30,7 @@ var (
 	auditFile       = flag.String("audit-file", server.DefaultAuditFile, "Путь к файлу логов аудита")
 	auditURL        = flag.String("audit-url", server.DefaultAuditURL, "URL приёмника логов аудита")
 	pprofAddress    = flag.String("pprof-address", server.DefaultPprofAddress, "Адрес pprof, пусто выключает")
+	trustedSubnet   = flag.String("trusted-subnet", server.DefaultTrustedSubnet, "Доверенная подсеть агентов в CIDR")
 	configFile      = flag.String("config", "", "Путь к JSON-файлу конфигурации")
 )
 
@@ -46,6 +47,7 @@ func init() {
 	flag.BoolVar(restore, "restore", server.DefaultRestore, "Загружать ранее сохранённые значения")
 	flag.StringVar(databaseDsn, "database-dsn", server.DefaultDatabaseDSN, "Адрес подключения к БД")
 	flag.StringVar(key, "key", server.DefaultKey, "Секретный ключ для подписи")
+	flag.StringVar(trustedSubnet, "t", server.DefaultTrustedSubnet, "Доверенная подсеть агентов в CIDR (shorthand)")
 	flag.StringVar(configFile, "c", "", "Путь к JSON-файлу конфигурации (shorthand)")
 }
 
@@ -97,6 +99,8 @@ func run() error {
 			s.AuditURL = *auditURL
 		case "pprof-address":
 			s.PprofAddress = *pprofAddress
+		case "trusted-subnet", "t":
+			s.TrustedSubnet = *trustedSubnet
 		}
 	})
 
