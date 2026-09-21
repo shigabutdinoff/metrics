@@ -13,7 +13,9 @@ import (
 	"fmt"
 	"io"
 	"math/rand"
+	"net"
 	"net/http"
+	"net/url"
 	"runtime"
 	"sync"
 	"time"
@@ -269,6 +271,9 @@ func (a *Agent) sendMetrics(ctx context.Context, items []metrics.Metrics) error 
 	if hashHeader != "" {
 		req.SetHeader("HashSHA256", hashHeader)
 	}
+	if ip := a.realIP(ctx); ip != "" {
+		req.SetHeader("X-Real-IP", ip)
+	}
 
 	resp, err := req.Post(path)
 	if err != nil {
@@ -279,4 +284,31 @@ func (a *Agent) sendMetrics(ctx context.Context, items []metrics.Metrics) error 
 		return fmt.Errorf("ошибка получения статуса %d", resp.StatusCode())
 	}
 	return nil
+}
+
+func (a *Agent) realIP(ctx context.Context) string {
+	ip, err := hostIP(ctx, string(a.Address))
+	if err != nil {
+		a.Logger.Warn("IP хоста не определён, X-Real-IP не отправляется", zap.Error(err))
+		return ""
+	}
+	return ip.String()
+}
+
+func hostIP(ctx context.Context, address string) (net.IP, error) {
+	u, err := url.Parse(address)
+	if err != nil {
+		return nil, err
+	}
+	var d net.Dialer
+	host := net.JoinHostPort(u.Hostname(), cmp.Or(u.Port(), "80"))
+	conn, err := d.DialContext(ctx, "udp4", host)
+	if err != nil {
+		conn, err = d.DialContext(ctx, "udp", host)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close()
+	return conn.LocalAddr().(*net.UDPAddr).IP, nil
 }

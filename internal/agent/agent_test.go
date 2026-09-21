@@ -16,6 +16,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -272,6 +273,62 @@ func TestAgent_BuildBatch(t *testing.T) {
 		if m.ID == "nil" {
 			t.Fatal("метрика с nil-значением попала в батч")
 		}
+	}
+}
+
+func TestAgent_SendMetrics_RealIP(t *testing.T) {
+	var got []string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.Header.Values("X-Real-IP")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer ts.Close()
+
+	g := 1.5
+	a := &Agent{
+		Storage: storage.NewMemStorage(),
+		Client:  resty.NewWithClient(ts.Client()),
+		Config:  config.Config{Address: config.Address(ts.URL)},
+	}
+
+	items := []metrics.Metrics{{ID: "cpu", MType: metrics.Gauge, Value: &g}}
+	if err := a.sendMetrics(t.Context(), items); err != nil {
+		t.Fatalf("sendMetrics() ошибка = %v", err)
+	}
+
+	if !slices.Equal(got, []string{"127.0.0.1"}) {
+		t.Fatalf("X-Real-IP = %q, ожидается 127.0.0.1", got)
+	}
+}
+
+func TestHostIP(t *testing.T) {
+	tests := []struct {
+		name    string
+		address string
+		want    string
+		wantErr bool
+	}{
+		{name: "адрес с портом", address: "http://127.0.0.1:8080", want: "127.0.0.1"},
+		{name: "адрес без порта", address: "http://127.0.0.1", want: "127.0.0.1"},
+		{name: "localhost", address: "http://localhost:8080", want: "127.0.0.1"},
+		{name: "неразбираемый адрес", address: "http://[::1", wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ip, err := hostIP(t.Context(), tt.address)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("hostIP() = %v, ожидается ошибка", ip)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("hostIP() ошибка = %v", err)
+			}
+			if ip.String() != tt.want {
+				t.Fatalf("hostIP() = %q, ожидается %q", ip, tt.want)
+			}
+		})
 	}
 }
 
