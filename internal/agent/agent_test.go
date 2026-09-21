@@ -1,9 +1,12 @@
 package agent
 
 import (
+	"bytes"
 	"compress/gzip"
 	"context"
 	"crypto/hmac"
+	"crypto/rand"
+	"crypto/rsa"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -11,6 +14,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
@@ -20,10 +24,12 @@ import (
 
 	"github.com/go-resty/resty/v2"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 
 	config "github.com/shigabutdinoff/metrics/internal/config/agent"
 	"github.com/shigabutdinoff/metrics/internal/model/metrics"
 	"github.com/shigabutdinoff/metrics/internal/storage"
+	"github.com/shigabutdinoff/metrics/pkg/rsacrypt"
 )
 
 func TestAgent_CollectMetrics(t *testing.T) {
@@ -363,5 +369,204 @@ func BenchmarkAgent_SendMetrics(b *testing.B) {
 		if err := a.sendMetrics(ctx, items); err != nil {
 			b.Fatalf("sendMetrics() ошибка = %v", err)
 		}
+	}
+}
+
+func TestAgent_SendMetrics_Encrypted(t *testing.T) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var got []metrics.Metrics
+	var gotHash, wantHash string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		encrypted, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("io.ReadAll() ошибка = %v", err)
+			return
+		}
+		compressed, err := rsacrypt.Decrypt(key, encrypted)
+		if err != nil {
+			t.Errorf("rsacrypt.Decrypt() ошибка = %v", err)
+			return
+		}
+		zr, err := gzip.NewReader(bytes.NewReader(compressed))
+		if err != nil {
+			t.Errorf("gzip.NewReader() ошибка = %v", err)
+			return
+		}
+		defer zr.Close()
+		body, err := io.ReadAll(zr)
+		if err != nil {
+			t.Errorf("io.ReadAll(gzip) ошибка = %v", err)
+			return
+		}
+		if err := json.Unmarshal(body, &got); err != nil {
+			t.Errorf("json.Unmarshal() ошибка = %v", err)
+			return
+		}
+		mac := hmac.New(sha256.New, []byte("secret"))
+		mac.Write(body)
+		wantHash = hex.EncodeToString(mac.Sum(nil))
+		gotHash = r.Header.Get("HashSHA256")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer ts.Close()
+
+	g := 1.5
+	a := &Agent{
+		Storage:   storage.NewMemStorage(),
+		Client:    resty.NewWithClient(ts.Client()),
+		Config:    config.Config{Address: config.Address(ts.URL), Key: "secret"},
+		PublicKey: &key.PublicKey,
+	}
+
+	items := []metrics.Metrics{{ID: "cpu", MType: metrics.Gauge, Value: &g}}
+	if err := a.sendMetrics(t.Context(), items); err != nil {
+		t.Fatalf("sendMetrics() ошибка = %v", err)
+	}
+
+	if len(got) != 1 || got[0].ID != "cpu" || got[0].Value == nil || *got[0].Value != g {
+		t.Fatalf("сервер получил %+v, ожидается %+v", got, items)
+	}
+	if gotHash != wantHash {
+		t.Fatalf("HashSHA256 = %q, ожидается %q по открытому JSON", gotHash, wantHash)
+	}
+}
+
+func TestAgent_Run_BadCryptoKey(t *testing.T) {
+	a := &Agent{
+		Storage: storage.NewMemStorage(),
+		Config:  config.Config{CryptoKey: filepath.Join(t.TempDir(), "missing.pem")},
+		Logger:  zap.NewNop(),
+	}
+
+	if err := a.Run(t.Context()); err == nil {
+		t.Fatal("ожидалась ошибка загрузки публичного ключа")
+	}
+}
+
+func TestAgent_Run_DeliversQueueAfterCancel(t *testing.T) {
+	started := make(chan struct{}, 1)
+	release := make(chan struct{})
+	var delivered, aborted atomic.Int64
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Обрыв соединения сервер замечает только после вычитанного тела.
+		_, _ = io.Copy(io.Discard, r.Body)
+		select {
+		case started <- struct{}{}:
+		default:
+		}
+		select {
+		case <-release:
+			delivered.Add(1)
+			w.WriteHeader(http.StatusOK)
+		case <-r.Context().Done():
+			aborted.Add(1)
+		}
+	}))
+	defer ts.Close()
+
+	st := storage.NewMemStorage()
+	v := 1.0
+	st.SetGauge(t.Context(), "g", &v)
+
+	a := &Agent{
+		Storage:        st,
+		Client:         resty.NewWithClient(ts.Client()),
+		Config:         config.Config{Address: config.Address(ts.URL), RateLimitInt64: 1},
+		PollInterval:   time.Hour,
+		ReportInterval: 10 * time.Millisecond,
+		Logger:         zap.NewNop(),
+	}
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() { errCh <- a.Run(ctx) }()
+
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("первый запрос не начался")
+	}
+	// Воркер занят первым запросом: вторая пачка в очереди, третья ждёт места.
+	time.Sleep(100 * time.Millisecond)
+	cancel()
+	// Отмена успевает дойти до клиента, если отправка от неё зависит.
+	time.Sleep(100 * time.Millisecond)
+	close(release)
+
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatalf("Run() ошибка = %v, ожидается nil", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Run не завершился после отмены контекста")
+	}
+
+	if got := aborted.Load(); got != 0 {
+		t.Fatalf("оборвано запросов = %d, ожидается 0", got)
+	}
+	if got := delivered.Load(); got < 3 {
+		t.Fatalf("доставлено запросов = %d, ожидается не меньше 3", got)
+	}
+}
+
+func TestAgent_Run_ShutdownTimeout(t *testing.T) {
+	started := make(chan struct{}, 1)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		select {
+		case started <- struct{}{}:
+		default:
+		}
+		// Зависший сервер: ответа нет, пока клиент не оборвёт запрос.
+		<-r.Context().Done()
+	}))
+	defer ts.Close()
+
+	st := storage.NewMemStorage()
+	v := 1.0
+	st.SetGauge(t.Context(), "g", &v)
+
+	core, logs := observer.New(zap.WarnLevel)
+	a := &Agent{
+		Storage:         st,
+		Client:          resty.NewWithClient(ts.Client()),
+		Config:          config.Config{Address: config.Address(ts.URL), RateLimitInt64: 1},
+		PollInterval:    time.Hour,
+		ReportInterval:  10 * time.Millisecond,
+		Logger:          zap.New(core),
+		shutdownTimeout: 100 * time.Millisecond,
+	}
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() { errCh <- a.Run(ctx) }()
+
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("первый запрос не начался")
+	}
+	cancel()
+
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatalf("Run() ошибка = %v, ожидается nil", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Run не завершился после таймаута досылки")
+	}
+
+	if got := logs.FilterMessageSnippet("Очередь метрик не отправлена").Len(); got != 1 {
+		t.Fatalf("предупреждений о таймауте = %d, ожидается 1", got)
 	}
 }

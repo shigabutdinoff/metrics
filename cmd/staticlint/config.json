@@ -1,4 +1,5 @@
 {
   "prefixes": ["SA", "S1", "ST1", "QF1"],
+  "required": ["SA"],
   "exclude": ["QF1008"]
 }

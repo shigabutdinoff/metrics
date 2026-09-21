@@ -5,11 +5,15 @@ import (
 	"compress/gzip"
 	"context"
 	"crypto/hmac"
+	"crypto/rand"
+	"crypto/rsa"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -21,12 +25,16 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 
 	"github.com/shigabutdinoff/metrics/internal/audit"
 	"github.com/shigabutdinoff/metrics/internal/handlers/middleware/compress"
 	"github.com/shigabutdinoff/metrics/internal/handlers/middleware/reqbody"
 	"github.com/shigabutdinoff/metrics/internal/model/metrics"
+	"github.com/shigabutdinoff/metrics/internal/service/persistent"
 	"github.com/shigabutdinoff/metrics/internal/storage"
+	"github.com/shigabutdinoff/metrics/pkg/jsonconfig"
+	"github.com/shigabutdinoff/metrics/pkg/rsacrypt"
 )
 
 func TestNew(t *testing.T) {
@@ -96,7 +104,7 @@ func TestServer_Run(t *testing.T) {
 		s := New(storage.NewMemStorage(), zap.NewNop())
 		s.Address = "bad"
 
-		require.Error(t, s.Run())
+		require.Error(t, s.Run(t.Context()))
 	})
 
 	t.Run("возвращает ошибку аудита", func(t *testing.T) {
@@ -104,8 +112,312 @@ func TestServer_Run(t *testing.T) {
 		s.Address = "bad"
 		s.AuditFile = filepath.Join(t.TempDir(), "missing", "audit.log")
 
-		require.ErrorIs(t, s.Run(), os.ErrNotExist)
+		require.ErrorIs(t, s.Run(t.Context()), os.ErrNotExist)
 	})
+
+	t.Run("возвращает ошибку приватного ключа", func(t *testing.T) {
+		s := New(storage.NewMemStorage(), zap.NewNop())
+		s.Address = "bad"
+		s.CryptoKey = filepath.Join(t.TempDir(), "missing.pem")
+
+		require.ErrorIs(t, s.Run(t.Context()), os.ErrNotExist)
+	})
+}
+
+// Без keep-alive: запасное соединение без запроса держит Shutdown до 5 с.
+var testClient = &http.Client{Transport: &http.Transport{DisableKeepAlives: true}}
+
+func freeAddr(t *testing.T) string {
+	t.Helper()
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	addr := ln.Addr().String()
+	require.NoError(t, ln.Close())
+	return addr
+}
+
+func newFileServer(t *testing.T, interval jsonconfig.Seconds) *Server {
+	t.Helper()
+
+	s := New(storage.NewMemStorage(), zap.NewNop())
+	s.FileStoragePath = filepath.Join(t.TempDir(), "metrics.json")
+	s.Restore = false
+	s.StoreInterval = interval
+	return s
+}
+
+func runServer(t *testing.T, s *Server) (context.CancelFunc, <-chan error) {
+	t.Helper()
+
+	s.Address = freeAddr(t)
+	ctx, cancel := context.WithCancel(t.Context())
+
+	errCh := make(chan error, 1)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		errCh <- s.Run(ctx)
+	}()
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+		}
+	})
+
+	require.Eventually(t, func() bool {
+		if len(errCh) > 0 {
+			return true
+		}
+		resp, err := testClient.Get("http://" + s.Address + "/")
+		if err != nil {
+			return false
+		}
+		_ = resp.Body.Close()
+		return resp.StatusCode == http.StatusOK
+	}, 2*time.Second, 10*time.Millisecond, "сервер не поднялся")
+	if len(errCh) > 0 {
+		t.Fatalf("Run завершился до старта сервера: %v", <-errCh)
+	}
+
+	return cancel, errCh
+}
+
+func waitRun(t *testing.T, errCh <-chan error) error {
+	t.Helper()
+
+	select {
+	case err := <-errCh:
+		return err
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run не завершился после отмены контекста")
+		return nil
+	}
+}
+
+func postOK(t *testing.T, s *Server, route string) {
+	t.Helper()
+
+	resp, err := testClient.Post("http://"+s.Address+route, "text/plain", nil)
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+}
+
+func loadGauge(t *testing.T, path, name string) (*float64, error) {
+	t.Helper()
+
+	st := storage.NewMemStorage()
+	if err := persistent.New(st, path, zap.NewNop()).Load(); err != nil {
+		return nil, err
+	}
+	return st.GetGauge(t.Context(), name), nil
+}
+
+func requireSavedGauge(t *testing.T, path, name string, want float64) {
+	t.Helper()
+
+	got, err := loadGauge(t, path, name)
+	require.NoError(t, err)
+	require.NotNilf(t, got, "gauge %s не сохранён в %s", name, path)
+	require.Equal(t, want, *got)
+}
+
+func TestServer_Run_SavesOnShutdown(t *testing.T) {
+	s := newFileServer(t, 3600)
+
+	cancel, errCh := runServer(t, s)
+
+	postOK(t, s, "/update/gauge/temp/12.5")
+	require.NoFileExists(t, s.FileStoragePath)
+
+	cancel()
+	require.NoError(t, waitRun(t, errCh))
+
+	requireSavedGauge(t, s.FileStoragePath, "temp", 12.5)
+}
+
+func TestServer_Run_FinishesActiveRequest(t *testing.T) {
+	s := newFileServer(t, 3600)
+
+	cancel, errCh := runServer(t, s)
+
+	// Тело идёт через pipe: запрос начат, но сервер ждёт его окончания.
+	pr, pw := io.Pipe()
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, "http://"+s.Address+"/update/", pr)
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+
+	type result struct {
+		status int
+		err    error
+	}
+	resCh := make(chan result, 1)
+	go func() {
+		resp, err := testClient.Do(req)
+		if err != nil {
+			resCh <- result{err: err}
+			return
+		}
+		_ = resp.Body.Close()
+		resCh <- result{status: resp.StatusCode}
+	}()
+
+	_, err = pw.Write([]byte(`{"id":"temp","type":"gauge",`))
+	require.NoError(t, err)
+	time.Sleep(100 * time.Millisecond)
+
+	cancel()
+	time.Sleep(100 * time.Millisecond)
+	select {
+	case err := <-errCh:
+		t.Fatalf("Run завершился, не дождавшись активного запроса: %v", err)
+	default:
+	}
+
+	_, err = pw.Write([]byte(`"value":12.5}`))
+	require.NoError(t, err)
+	require.NoError(t, pw.Close())
+
+	select {
+	case res := <-resCh:
+		require.NoError(t, res.err)
+		require.Equal(t, http.StatusOK, res.status)
+	case <-time.After(5 * time.Second):
+		t.Fatal("активный запрос не получил ответ")
+	}
+	require.NoError(t, waitRun(t, errCh))
+
+	requireSavedGauge(t, s.FileStoragePath, "temp", 12.5)
+}
+
+func TestServer_Run_ShutdownTimeout(t *testing.T) {
+	s := newFileServer(t, 3600)
+	s.shutdownTimeout = 100 * time.Millisecond
+	core, logs := observer.New(zap.WarnLevel)
+	s.Logger = zap.New(core)
+
+	cancel, errCh := runServer(t, s)
+
+	postOK(t, s, "/update/gauge/temp/12.5")
+
+	// Зависший запрос: заголовки и начало тела без продолжения.
+	conn, err := net.Dial("tcp", s.Address)
+	require.NoError(t, err)
+	defer func() { _ = conn.Close() }()
+	_, err = io.WriteString(conn, "POST /update/ HTTP/1.1\r\nHost: test\r\n"+
+		"Content-Type: application/json\r\nContent-Length: 64\r\n\r\n{\"id\":")
+	require.NoError(t, err)
+	time.Sleep(100 * time.Millisecond)
+
+	cancel()
+	require.NoError(t, waitRun(t, errCh))
+	require.Equal(t, 1, logs.FilterMessageSnippet("Не удалось штатно остановить сервер").Len())
+	requireSavedGauge(t, s.FileStoragePath, "temp", 12.5)
+
+	// После таймаута сервер закрывает соединение, чтение не виснет.
+	require.NoError(t, conn.SetReadDeadline(time.Now().Add(2*time.Second)))
+	_, err = io.Copy(io.Discard, conn)
+	require.Falsef(t, os.IsTimeout(err), "зависшее соединение не закрыто: %v", err)
+}
+
+func TestServer_Run_SaveErrorOnShutdown(t *testing.T) {
+	s := newFileServer(t, 3600)
+
+	// Каталог для файла метрик не создать: на его месте обычный файл.
+	blocker := filepath.Join(filepath.Dir(s.FileStoragePath), "blocker")
+	require.NoError(t, os.WriteFile(blocker, nil, 0o644))
+	s.FileStoragePath = filepath.Join(blocker, "metrics.json")
+
+	cancel, errCh := runServer(t, s)
+	cancel()
+
+	require.Error(t, waitRun(t, errCh))
+}
+
+func TestServer_Run_PeriodicSave(t *testing.T) {
+	s := newFileServer(t, 1)
+	path := s.FileStoragePath
+
+	cancel, errCh := runServer(t, s)
+
+	postOK(t, s, "/update/gauge/temp/12.5")
+
+	require.Eventually(t, func() bool {
+		got, err := loadGauge(t, path, "temp")
+		return err == nil && got != nil
+	}, 3*time.Second, 50*time.Millisecond, "тикер не сохранил метрики")
+	requireSavedGauge(t, path, "temp", 12.5)
+
+	cancel()
+	require.NoError(t, waitRun(t, errCh))
+
+	// После остановки тикер не пишет: удалённый файл не появляется снова.
+	require.NoError(t, os.Remove(path))
+	time.Sleep(1200 * time.Millisecond)
+	require.NoFileExists(t, path)
+}
+
+func TestServer_Run_SyncSave(t *testing.T) {
+	s := newFileServer(t, 0)
+
+	cancel, errCh := runServer(t, s)
+
+	postOK(t, s, "/update/gauge/temp/12.5")
+
+	// Нулевой интервал: метрика в файле сразу после ответа, до остановки.
+	requireSavedGauge(t, s.FileStoragePath, "temp", 12.5)
+
+	cancel()
+	require.NoError(t, waitRun(t, errCh))
+}
+
+func TestServer_Run_ListenErrorKeepsFile(t *testing.T) {
+	s := newFileServer(t, 3600)
+	s.Address = "bad"
+	saved := `[{"id":"temp","type":"gauge","value":12.5}]`
+	require.NoError(t, os.WriteFile(s.FileStoragePath, []byte(saved), 0o644))
+
+	require.Error(t, s.Run(t.Context()))
+
+	got, err := os.ReadFile(s.FileStoragePath)
+	require.NoError(t, err)
+	require.Equal(t, saved, string(got))
+}
+
+func TestServer_ConfigFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "server.json")
+	data := `{
+		"address": "localhost:8081",
+		"restore": false,
+		"store_interval": "1s",
+		"store_file": "/path/to/file.db",
+		"database_dsn": "postgres://localhost/metrics",
+		"crypto_key": "/path/to/key.pem",
+		"key": "secret",
+		"audit_file": "/path/to/audit.log",
+		"audit_url": "http://localhost:9000/audit",
+		"pprof_address": "localhost:6060",
+		"database": {}
+	}`
+	require.NoError(t, os.WriteFile(path, []byte(data), 0o644))
+
+	s := New(storage.NewMemStorage(), zap.NewNop())
+	require.NoError(t, jsonconfig.Load(path, s))
+
+	require.Equal(t, "localhost:8081", s.Address)
+	require.False(t, s.Restore)
+	require.Equal(t, jsonconfig.Seconds(1), s.StoreInterval)
+	require.Equal(t, "/path/to/file.db", s.FileStoragePath)
+	require.Equal(t, "postgres://localhost/metrics", s.DatabaseDSN)
+	require.Equal(t, "/path/to/key.pem", s.CryptoKey)
+	require.Equal(t, "secret", s.Key)
+	require.Equal(t, "/path/to/audit.log", s.AuditFile)
+	require.Equal(t, "http://localhost:9000/audit", s.AuditURL)
+	require.Equal(t, "localhost:6060", s.PprofAddress)
+	require.Nil(t, s.Database)
 }
 
 func TestGzipCompression(t *testing.T) {
@@ -346,7 +658,7 @@ func TestSetupAuditFailsFast(t *testing.T) {
 		s.AuditFile = filepath.Join(t.TempDir(), "audit.log")
 		s.AuditURL = "not a url"
 
-		require.Error(t, s.Run())
+		require.Error(t, s.Run(t.Context()))
 		require.Nil(t, s.auditor)
 		require.Empty(t, s.auditClosers)
 	})
@@ -446,4 +758,116 @@ func TestBodyLimit(t *testing.T) {
 			require.Equal(t, http.StatusRequestEntityTooLarge, rr.Code)
 		})
 	}
+}
+
+func TestRouter_Updates_Encrypted(t *testing.T) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+	body, err := json.Marshal(sampleBatch())
+	require.NoError(t, err)
+	encrypted, err := rsacrypt.Encrypt(&key.PublicKey, gzipBytes(body))
+	require.NoError(t, err)
+	hash := computeHMAC([]byte("secret"), body)
+
+	tests := []struct {
+		name       string
+		body       []byte
+		wantStatus int
+	}{
+		{name: "шифрованное тело принимается", body: encrypted, wantStatus: http.StatusOK},
+		{name: "открытое тело при заданном ключе отклоняется", body: gzipBytes(body), wantStatus: http.StatusBadRequest},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := New(storage.NewMemStorage(), zap.NewNop())
+			s.Key = "secret"
+			s.privateKey = key
+			s.setupRoutes()
+
+			rr := httptest.NewRecorder()
+			s.Router.ServeHTTP(rr, updatesRequest(bytes.NewReader(tt.body), hash))
+			require.Equal(t, tt.wantStatus, rr.Code, rr.Body.String())
+
+			poll := s.Storage.GetCounters(t.Context())["PollCount"]
+			if tt.wantStatus != http.StatusOK {
+				require.Nil(t, poll)
+				return
+			}
+			require.NotNil(t, poll)
+			require.EqualValues(t, 42, *poll)
+		})
+	}
+}
+
+func TestIsRetriablePGError(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{name: "nil", err: nil, want: false},
+		{name: "истёк таймаут", err: context.DeadlineExceeded, want: true},
+		{name: "обёрнутая отмена контекста", err: fmt.Errorf("upsert: %w", context.Canceled), want: true},
+		{name: "класс 08, сбой соединения", err: errors.New("ERROR: connection failure (SQLSTATE 08006)"), want: true},
+		{name: "класс 08 в нижнем регистре", err: errors.New("sqlstate 08001"), want: true},
+		{name: "ошибка сериализации", err: errors.New("SQLSTATE 40001"), want: true},
+		{name: "взаимная блокировка", err: errors.New("SQLSTATE 40P01"), want: true},
+		{name: "остановка сервера БД", err: errors.New("SQLSTATE 57P01"), want: true},
+		{name: "слишком много соединений", err: errors.New("SQLSTATE 53300"), want: true},
+		{name: "нарушение уникальности", err: errors.New("SQLSTATE 23505"), want: false},
+		{name: "ошибка без SQLSTATE", err: errors.New("сбой"), want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, isRetriablePGError(tt.err))
+		})
+	}
+}
+
+func TestWithRetry(t *testing.T) {
+	errFatal := errors.New("SQLSTATE 23505")
+	errTemp := errors.New("SQLSTATE 08006")
+
+	t.Run("успех с первой попытки", func(t *testing.T) {
+		calls := 0
+		err := withRetry(func() error { calls++; return nil }, isRetriablePGError, nil)
+		require.NoError(t, err)
+		require.Equal(t, 1, calls)
+	})
+
+	t.Run("неповторяемая ошибка возвращается сразу", func(t *testing.T) {
+		calls := 0
+		err := withRetry(func() error { calls++; return errFatal }, isRetriablePGError, nil)
+		require.ErrorIs(t, err, errFatal)
+		require.Equal(t, 1, calls)
+	})
+
+	t.Run("повторяемая ошибка, затем успех", func(t *testing.T) {
+		core, logs := observer.New(zap.InfoLevel)
+		calls := 0
+		op := func() error {
+			calls++
+			if calls == 1 {
+				return errTemp
+			}
+			return nil
+		}
+
+		// Первая пауза в withRetry равна секунде.
+		require.NoError(t, withRetry(op, isRetriablePGError, zap.New(core)))
+		require.Equal(t, 2, calls)
+
+		entries := logs.All()
+		require.Len(t, entries, 1)
+		require.EqualValues(t, 1, entries[0].ContextMap()["attempt"])
+	})
+}
+
+func TestServer_Save_NothingConfigured(t *testing.T) {
+	s := New(storage.NewMemStorage(), zap.NewNop())
+	s.FileStoragePath = ""
+
+	require.NoError(t, s.save(persistent.New(s.Storage, "", s.Logger)))
 }

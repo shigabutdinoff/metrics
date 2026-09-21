@@ -2,9 +2,11 @@ package agent
 
 import (
 	"bytes"
+	"cmp"
 	"compress/gzip"
 	"context"
 	"crypto/hmac"
+	"crypto/rsa"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -24,6 +26,7 @@ import (
 	"github.com/shigabutdinoff/metrics/internal/model/metrics"
 	"github.com/shigabutdinoff/metrics/internal/repository"
 	"github.com/shigabutdinoff/metrics/internal/storage"
+	"github.com/shigabutdinoff/metrics/pkg/rsacrypt"
 )
 
 // Agent собирает метрики и отправляет их на сервер.
@@ -38,9 +41,14 @@ type Agent struct {
 	ReportInterval time.Duration
 	// Logger журнал, куда пишутся ошибки сбора и отправки.
 	Logger *zap.Logger
+	// PublicKey ключ шифрования тела запросов, Run читает его из Config.CryptoKey.
+	PublicKey       *rsa.PublicKey
+	shutdownTimeout time.Duration
 	// Config конфигурация агента: адрес сервера, интервалы, ключ подписи.
 	agent.Config
 }
+
+const defaultShutdownTimeout = 10 * time.Second
 
 var gzipWriters = sync.Pool{New: func() any { return gzip.NewWriter(io.Discard) }}
 
@@ -84,17 +92,38 @@ func (a *Agent) workerCount() int {
 	return 1
 }
 
-// Run запускает агент
+// Run собирает и шлёт метрики до отмены ctx, затем досылает очередь
+// не дольше shutdownTimeout.
 func (a *Agent) Run(ctx context.Context) error {
+	if a.CryptoKey != "" {
+		pub, err := rsacrypt.LoadPublicKey(a.CryptoKey)
+		if err != nil {
+			return fmt.Errorf("загрузка публичного ключа: %w", err)
+		}
+		a.PublicKey = pub
+	}
+
 	workers := a.workerCount()
 	jobs := make(chan []metrics.Metrics, workers)
 
 	g, gctx := errgroup.WithContext(ctx)
+	sendCtx, cancelSend := context.WithCancel(context.WithoutCancel(ctx))
+	defer cancelSend()
+	timeout := cmp.Or(a.shutdownTimeout, defaultShutdownTimeout)
+	context.AfterFunc(ctx, func() {
+		select {
+		case <-time.After(timeout):
+			a.Logger.Warn("Очередь метрик не отправлена за отведённое время",
+				zap.Duration("timeout", timeout))
+			cancelSend()
+		case <-sendCtx.Done():
+		}
+	})
 
 	for i := 0; i < workers; i++ {
 		g.Go(func() error {
 			for batch := range jobs {
-				if err := a.sendMetrics(gctx, batch); err != nil {
+				if err := a.sendMetrics(sendCtx, batch); err != nil {
 					a.Logger.Warn("Ошибка отправки метрик", zap.Error(err))
 				}
 			}
@@ -151,11 +180,8 @@ func (a *Agent) reportLoop(ctx context.Context, jobs chan<- []metrics.Metrics) {
 			if len(batch) == 0 {
 				continue
 			}
-			select {
-			case jobs <- batch:
-			case <-ctx.Done():
-				return
-			}
+			// Собранная пачка уже в обработке, воркеры читают jobs до close.
+			jobs <- batch
 		}
 	}
 }
@@ -224,6 +250,13 @@ func (a *Agent) sendMetrics(ctx context.Context, items []metrics.Metrics) error 
 		return err
 	}
 
+	payload := compressedBody.Bytes()
+	if a.PublicKey != nil {
+		if payload, err = rsacrypt.Encrypt(a.PublicKey, payload); err != nil {
+			return err
+		}
+	}
+
 	path := string(a.Address) + "/updates/"
 
 	req := a.Client.R().
@@ -231,7 +264,7 @@ func (a *Agent) sendMetrics(ctx context.Context, items []metrics.Metrics) error 
 		SetHeader("Content-Type", "application/json").
 		SetHeader("Content-Encoding", "gzip").
 		SetHeader("Accept-Encoding", "gzip").
-		SetBody(compressedBody.Bytes())
+		SetBody(payload)
 
 	if hashHeader != "" {
 		req.SetHeader("HashSHA256", hashHeader)

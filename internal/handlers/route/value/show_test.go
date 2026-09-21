@@ -64,6 +64,16 @@ func TestShow(t *testing.T) {
 			nameValue:  "absent",
 			wantStatus: http.StatusNotFound,
 		},
+		{
+			name:      "не путает gauge с одноимённым counter",
+			typeValue: "gauge",
+			nameValue: "requests",
+			prepare: func(st *storage.MemStorage) {
+				v := int64(7)
+				st.AddCounter(context.Background(), "requests", metrics.CounterValue(&v))
+			},
+			wantStatus: http.StatusNotFound,
+		},
 	}
 
 	for _, tt := range tests {
@@ -149,6 +159,26 @@ func TestShowApplicationJSON(t *testing.T) {
 			},
 			wantStatus: http.StatusBadRequest,
 		},
+		{
+			name: "не путает gauge с одноимённым counter",
+			prepare: func(st *storage.MemStorage) {
+				v := int64(7)
+				st.AddCounter(context.Background(), "requests", metrics.CounterValue(&v))
+			},
+			requestBody: metrics.Metrics{
+				ID:    "requests",
+				MType: metrics.Gauge,
+			},
+			wantStatus: http.StatusNotFound,
+		},
+		{
+			name: "возвращает not found при пробельном названии",
+			requestBody: metrics.Metrics{
+				ID:    "  ",
+				MType: metrics.Gauge,
+			},
+			wantStatus: http.StatusNotFound,
+		},
 	}
 
 	for _, tt := range tests {
@@ -197,6 +227,30 @@ func TestShowApplicationJSON(t *testing.T) {
 			}
 			if !equalInt64Ptr(resp.Delta, tt.wantResponse.Delta) {
 				t.Fatalf("Delta = %v, ожидается %v", resp.Delta, tt.wantResponse.Delta)
+			}
+		})
+	}
+}
+
+func TestShowApplicationJSON_BadBody(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+	}{
+		{name: "битый json", body: `{"id":"alloc",`},
+		{name: "пустое тело", body: ""},
+		{name: "неверный тип поля", body: `{"id":"alloc","type":"gauge","value":"много"}`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/value", bytes.NewReader([]byte(tt.body)))
+			rr := httptest.NewRecorder()
+
+			ShowApplicationJSON(storage.NewMemStorage()).ServeHTTP(rr, req)
+
+			if rr.Code != http.StatusBadRequest {
+				t.Fatalf("статус = %d, ожидается %d", rr.Code, http.StatusBadRequest)
 			}
 		})
 	}

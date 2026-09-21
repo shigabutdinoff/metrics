@@ -105,31 +105,6 @@ func (i *InGroup) Reset() {
 	if i == nil {
 		return
 	}
-	i.ResetWithVisited(map[interface{}]struct{}{}, i)
-}
-
-// ResetWithVisited продолжает сброс с общей картой посещённых объектов.
-// original сохраняет вызов пользовательского Reset при встраивании типа.
-// Тип необязательного параметра отличает собственный протокол от унаследованного.
-func (i *InGroup) ResetWithVisited(resetVisited3 map[interface{}]struct{}, resetOriginal3 interface{ Reset() }, _ ...*InGroup) {
-	if resetOriginal3 == nil {
-		return
-	}
-	if resetOriginal3 != i {
-		resetOriginal3.Reset()
-		return
-	}
-	if i == nil {
-		return
-	}
-	if resetVisited3 == nil {
-		resetVisited3 = map[interface{}]struct{}{}
-	}
-	if _, resetSeen3 := resetVisited3[i]; resetSeen3 {
-		return
-	}
-	resetVisited3[i] = struct{}{}
-
 	i.n = 0
 }
 

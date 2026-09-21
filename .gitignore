@@ -20,6 +20,11 @@ cmd/staticlint/main
 cmd/staticlint/staticlint
 cmd/reset/main
 cmd/reset/reset
+cmd/keygen/main
+cmd/keygen/keygen
+
+# Ключи шифрования
+*.pem
 
 # Dependency directories (remove the comment below to include it)
 vendor/
