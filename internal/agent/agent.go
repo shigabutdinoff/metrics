@@ -2,6 +2,7 @@ package agent
 
 import (
 	"bytes"
+	"cmp"
 	"compress/gzip"
 	"context"
 	"crypto/hmac"
@@ -41,10 +42,13 @@ type Agent struct {
 	// Logger журнал, куда пишутся ошибки сбора и отправки.
 	Logger *zap.Logger
 	// PublicKey ключ шифрования тела запросов, Run читает его из Config.CryptoKey.
-	PublicKey *rsa.PublicKey
+	PublicKey       *rsa.PublicKey
+	shutdownTimeout time.Duration
 	// Config конфигурация агента: адрес сервера, интервалы, ключ подписи.
 	agent.Config
 }
+
+const defaultShutdownTimeout = 10 * time.Second
 
 var gzipWriters = sync.Pool{New: func() any { return gzip.NewWriter(io.Discard) }}
 
@@ -88,7 +92,8 @@ func (a *Agent) workerCount() int {
 	return 1
 }
 
-// Run собирает и шлёт метрики до отмены ctx, затем досылает очередь.
+// Run собирает и шлёт метрики до отмены ctx, затем досылает очередь
+// не дольше shutdownTimeout.
 func (a *Agent) Run(ctx context.Context) error {
 	if a.CryptoKey != "" {
 		pub, err := rsacrypt.LoadPublicKey(a.CryptoKey)
@@ -102,8 +107,18 @@ func (a *Agent) Run(ctx context.Context) error {
 	jobs := make(chan []metrics.Metrics, workers)
 
 	g, gctx := errgroup.WithContext(ctx)
-	// Отмена ctx не рвёт отправку: воркеры досылают запросы и очередь.
-	sendCtx := context.WithoutCancel(ctx)
+	sendCtx, cancelSend := context.WithCancel(context.WithoutCancel(ctx))
+	defer cancelSend()
+	timeout := cmp.Or(a.shutdownTimeout, defaultShutdownTimeout)
+	context.AfterFunc(ctx, func() {
+		select {
+		case <-time.After(timeout):
+			a.Logger.Warn("Очередь метрик не отправлена за отведённое время",
+				zap.Duration("timeout", timeout))
+			cancelSend()
+		case <-sendCtx.Done():
+		}
+	})
 
 	for i := 0; i < workers; i++ {
 		g.Go(func() error {

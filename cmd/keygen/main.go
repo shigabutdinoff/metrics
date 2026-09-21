@@ -74,5 +74,5 @@ func run(dir string, bits int) error {
 		return err
 	}
 
-	return os.WriteFile(filepath.Join(dir, "private.pem"), privateKeyPEM.Bytes(), 0644)
+	return os.WriteFile(filepath.Join(dir, "private.pem"), privateKeyPEM.Bytes(), 0o600)
 }

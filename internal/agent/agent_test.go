@@ -24,6 +24,7 @@ import (
 
 	"github.com/go-resty/resty/v2"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 
 	config "github.com/shigabutdinoff/metrics/internal/config/agent"
 	"github.com/shigabutdinoff/metrics/internal/model/metrics"
@@ -512,5 +513,60 @@ func TestAgent_Run_DeliversQueueAfterCancel(t *testing.T) {
 	}
 	if got := delivered.Load(); got < 3 {
 		t.Fatalf("доставлено запросов = %d, ожидается не меньше 3", got)
+	}
+}
+
+func TestAgent_Run_ShutdownTimeout(t *testing.T) {
+	started := make(chan struct{}, 1)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		select {
+		case started <- struct{}{}:
+		default:
+		}
+		// Зависший сервер: ответа нет, пока клиент не оборвёт запрос.
+		<-r.Context().Done()
+	}))
+	defer ts.Close()
+
+	st := storage.NewMemStorage()
+	v := 1.0
+	st.SetGauge(t.Context(), "g", &v)
+
+	core, logs := observer.New(zap.WarnLevel)
+	a := &Agent{
+		Storage:         st,
+		Client:          resty.NewWithClient(ts.Client()),
+		Config:          config.Config{Address: config.Address(ts.URL), RateLimitInt64: 1},
+		PollInterval:    time.Hour,
+		ReportInterval:  10 * time.Millisecond,
+		Logger:          zap.New(core),
+		shutdownTimeout: 100 * time.Millisecond,
+	}
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() { errCh <- a.Run(ctx) }()
+
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("первый запрос не начался")
+	}
+	cancel()
+
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatalf("Run() ошибка = %v, ожидается nil", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Run не завершился после таймаута досылки")
+	}
+
+	if got := logs.FilterMessageSnippet("Очередь метрик не отправлена").Len(); got != 1 {
+		t.Fatalf("предупреждений о таймауте = %d, ожидается 1", got)
 	}
 }
