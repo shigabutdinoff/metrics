@@ -49,6 +49,13 @@ func (s *Server) audit(mw func(audit.Notifier, *zap.Logger) func(http.Handler) h
 	return mw(s.auditor, s.Logger)
 }
 
+func (s *Server) notifier() audit.Notifier {
+	if s.auditor == nil {
+		return nil
+	}
+	return s.auditor
+}
+
 func (s *Server) closeAudit() {
 	if s.auditor != nil {
 		s.auditor.Close()

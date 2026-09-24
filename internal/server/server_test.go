@@ -29,6 +29,7 @@ import (
 	"go.uber.org/zap/zaptest/observer"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
@@ -171,9 +172,11 @@ func runServer(t *testing.T, s *Server) (context.CancelFunc, <-chan error) {
 	t.Helper()
 
 	s.Address = freeAddr(t)
-	s.GRPCAddress = freeAddr(t)
-	for s.GRPCAddress == s.Address {
+	if s.CryptoCert != "" {
 		s.GRPCAddress = freeAddr(t)
+		for s.GRPCAddress == s.Address {
+			s.GRPCAddress = freeAddr(t)
+		}
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 
@@ -416,7 +419,7 @@ func TestServer_Run_GRPCListenError(t *testing.T) {
 	require.NoError(t, err)
 	defer ln.Close()
 
-	s := newFileServer(t, 3600)
+	s := withGRPCTLS(newFileServer(t, 3600))
 	s.Address = freeAddr(t)
 	s.GRPCAddress = ln.Addr().String()
 	saved := `[{"id":"temp","type":"gauge","value":12.5}]`
@@ -429,9 +432,51 @@ func TestServer_Run_GRPCListenError(t *testing.T) {
 	require.Equal(t, saved, string(got))
 }
 
+const (
+	testCert = "testdata/cert.pem"
+	testKey  = "testdata/private.pem"
+)
+
+func withGRPCTLS(s *Server) *Server {
+	s.CryptoCert = testCert
+	s.CryptoKey = testKey
+	return s
+}
+
+func TestServer_Run_GRPCWithoutTLS(t *testing.T) {
+	for _, cert := range []string{"", testCert} {
+		s := newFileServer(t, 3600)
+		s.CryptoCert = cert
+		s.Address = freeAddr(t)
+		s.GRPCAddress = freeAddr(t)
+
+		require.ErrorContains(t, s.Run(t.Context()), "флаги -crypto-cert и -crypto-key")
+	}
+}
+
+func TestServer_Run_GRPCRejectsPlaintext(t *testing.T) {
+	s := withGRPCTLS(newFileServer(t, 3600))
+	runServer(t, s)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	_, err := dialGRPC(t, s.GRPCAddress).UpdateMetrics(ctx, gaugeRequest(), grpc.WaitForReady(true))
+	require.NoError(t, err)
+
+	conn, err := grpc.NewClient(s.GRPCAddress, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = conn.Close() })
+	_, err = pb.NewMetricsClient(conn).UpdateMetrics(ctx, pb.UpdateMetricsRequest_builder{Metrics: []*pb.Metric{
+		pb.Metric_builder{Id: "Plain", Type: pb.Metric_GAUGE, Value: 1}.Build(),
+	}}.Build())
+	require.Equal(t, codes.Unavailable, status.Code(err))
+	require.Nil(t, s.Storage.GetGauge(t.Context(), "Plain"))
+}
+
 func dialGRPC(t *testing.T, addr string) pb.MetricsClient {
 	t.Helper()
-	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	creds, err := credentials.NewClientTLSFromFile(testCert, "")
+	require.NoError(t, err)
+	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(creds))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = conn.Close() })
 	return pb.NewMetricsClient(conn)
@@ -444,7 +489,7 @@ func gaugeRequest() *pb.UpdateMetricsRequest {
 }
 
 func TestServer_Run_GRPC(t *testing.T) {
-	s := newFileServer(t, 0)
+	s := withGRPCTLS(newFileServer(t, 0))
 	s.TrustedSubnet = "192.168.0.0/24"
 	s.AuditFile = filepath.Join(t.TempDir(), "audit.log")
 	cancel, errCh := runServer(t, s)
@@ -486,7 +531,7 @@ func (b blockingStorage) SetGauge(ctx context.Context, _ string, _ metrics.Gauge
 }
 
 func TestServer_Run_GRPCShutdownTimeout(t *testing.T) {
-	s := newFileServer(t, 3600)
+	s := withGRPCTLS(newFileServer(t, 3600))
 	s.shutdownTimeout = 100 * time.Millisecond
 	entered, exited := make(chan struct{}), make(chan struct{})
 	s.Storage = blockingStorage{Storage: s.Storage, entered: entered, exited: exited}

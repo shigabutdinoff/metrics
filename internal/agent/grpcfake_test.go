@@ -8,10 +8,16 @@ import (
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
 	pb "github.com/shigabutdinoff/metrics/internal/proto"
+)
+
+const (
+	testCert = "testdata/cert.pem"
+	testKey  = "testdata/private.pem"
 )
 
 type fakeMetricsServer struct {
@@ -46,7 +52,11 @@ func startGRPC(t *testing.T, f *fakeMetricsServer) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	gs := grpc.NewServer()
+	creds, err := credentials.NewServerTLSFromFile(testCert, testKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gs := grpc.NewServer(grpc.Creds(creds))
 	pb.RegisterMetricsServer(gs, f)
 	go func() { _ = gs.Serve(lis) }()
 	t.Cleanup(gs.Stop)
@@ -55,7 +65,7 @@ func startGRPC(t *testing.T, f *fakeMetricsServer) string {
 
 func grpcClient(t *testing.T, addr string) pb.MetricsClient {
 	t.Helper()
-	conn, err := newGRPCConn(addr)
+	conn, err := newGRPCConn(addr, testCert)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"crypto/tls"
 	"os"
 	"path/filepath"
 	"testing"
@@ -23,6 +24,14 @@ func TestRun(t *testing.T) {
 	priv, err := rsacrypt.LoadPrivateKey(filepath.Join(dir, "private.pem"))
 	if err != nil {
 		t.Fatalf("LoadPrivateKey() ошибка = %v", err)
+	}
+
+	pair, err := tls.LoadX509KeyPair(filepath.Join(dir, "cert.pem"), filepath.Join(dir, "private.pem"))
+	if err != nil {
+		t.Fatalf("LoadX509KeyPair() ошибка = %v", err)
+	}
+	if err = pair.Leaf.VerifyHostname("localhost"); err != nil {
+		t.Fatalf("VerifyHostname(localhost) ошибка = %v", err)
 	}
 
 	info, err := os.Stat(filepath.Join(dir, "private.pem"))

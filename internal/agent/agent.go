@@ -113,15 +113,15 @@ func (a *Agent) Run(ctx context.Context) error {
 
 	send := a.sendMetrics
 	if a.GRPCAddress != "" {
-		conn, err := newGRPCConn(a.GRPCAddress)
+		conn, err := newGRPCConn(a.GRPCAddress, a.CryptoKey)
 		if err != nil {
 			return fmt.Errorf("клиент gRPC: %w", err)
 		}
 		defer conn.Close()
 		a.grpcClient = pb.NewMetricsClient(conn)
 		send = a.sendMetricsGRPC
-		if a.Config.Key != "" || a.PublicKey != nil {
-			a.Logger.Warn("Подпись и шифрование по gRPC не применяются")
+		if a.Config.Key != "" {
+			a.Logger.Warn("Подпись по gRPC не применяется")
 		}
 	}
 

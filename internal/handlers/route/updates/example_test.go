@@ -15,7 +15,7 @@ import (
 // Приём пачки метрик одним запросом. В ответе возвращается присланный массив.
 func ExampleStoreApplicationJSONBatch() {
 	st := storage.NewMemStorage()
-	h := updates.StoreApplicationJSONBatch(st, zap.NewNop())
+	h := updates.StoreApplicationJSONBatch(st, nil, zap.NewNop())
 
 	body := strings.NewReader(
 		`[{"id":"Alloc","type":"gauge","value":12.5},{"id":"PollCount","type":"counter","delta":5}]`,

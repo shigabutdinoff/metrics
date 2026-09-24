@@ -14,12 +14,9 @@ const Header = "X-Real-IP"
 
 // Middleware пускает запрос, если IP из X-Real-IP или X-Forwarded-For
 // входит в subnet, иначе пишет причину в logger и отвечает 403.
-// nil подсеть прозрачна.
+// subnet не может быть nil.
 func Middleware(subnet *net.IPNet, logger *zap.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
-		if subnet == nil {
-			return next
-		}
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			ip, err := resolveIP(r)
 			if err != nil {

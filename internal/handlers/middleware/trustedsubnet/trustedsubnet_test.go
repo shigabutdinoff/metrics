@@ -26,7 +26,6 @@ func TestMiddleware(t *testing.T) {
 		wantLog      string
 		wantLogIP    string
 	}{
-		{name: "nil подсеть - без проверки", subnet: nil, realIP: "", wantStatus: http.StatusOK},
 		{name: "IP в подсети - проходит", subnet: subnet, realIP: "192.168.0.69", wantStatus: http.StatusOK},
 		{name: "IP вне подсети - 403", subnet: subnet, realIP: "10.0.0.1", wantStatus: http.StatusForbidden, wantLog: "IP агента вне доверенной подсети", wantLogIP: "10.0.0.1"},
 		{name: "нет заголовка - 403", subnet: subnet, realIP: "", wantStatus: http.StatusForbidden, wantLog: "IP агента не определён"},

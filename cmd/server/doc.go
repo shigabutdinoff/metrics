@@ -9,6 +9,7 @@
 //	-d, -database-dsn       строка подключения к PostgreSQL
 //	-k, -key                ключ подписи HMAC-SHA256
 //	-ck, -crypto-key        путь к файлу с приватным ключом RSA, см. cmd/keygen
+//	-cc, -crypto-cert       путь к сертификату TLS для gRPC, см. cmd/keygen
 //	-af, -audit-file        путь к файлу аудита
 //	-au, -audit-url         адрес приёмника аудита
 //	-pa, -pprof-address     адрес сервера pprof, пустой отключает его

@@ -27,6 +27,7 @@ var (
 	databaseDsn     = flag.String("database-dsn", server.DefaultDatabaseDSN, "Адрес подключения к БД")
 	key             = flag.String("key", server.DefaultKey, "Секретный ключ для подписи")
 	cryptoKey       = flag.String("crypto-key", server.DefaultCryptoKey, "Путь к файлу с приватным ключом")
+	cryptoCert      = flag.String("crypto-cert", server.DefaultCryptoCert, "Путь к сертификату TLS для gRPC")
 	auditFile       = flag.String("audit-file", server.DefaultAuditFile, "Путь к файлу логов аудита")
 	auditURL        = flag.String("audit-url", server.DefaultAuditURL, "URL приёмника логов аудита")
 	pprofAddress    = flag.String("pprof-address", server.DefaultPprofAddress, "Адрес pprof, пусто выключает")
@@ -49,6 +50,7 @@ func init() {
 	flag.StringVar(databaseDsn, "d", server.DefaultDatabaseDSN, "Адрес подключения к БД (shorthand)")
 	flag.StringVar(key, "k", server.DefaultKey, "Секретный ключ для подписи (shorthand)")
 	flag.StringVar(cryptoKey, "ck", server.DefaultCryptoKey, "Путь к файлу с приватным ключом (shorthand)")
+	flag.StringVar(cryptoCert, "cc", server.DefaultCryptoCert, "Путь к сертификату TLS для gRPC (shorthand)")
 	flag.StringVar(auditFile, "af", server.DefaultAuditFile, "Путь к файлу логов аудита (shorthand)")
 	flag.StringVar(auditURL, "au", server.DefaultAuditURL, "URL приёмника логов аудита (shorthand)")
 	flag.StringVar(pprofAddress, "pa", server.DefaultPprofAddress, "Адрес pprof, пусто выключает (shorthand)")
@@ -99,6 +101,8 @@ func run() error {
 			s.Key = *key
 		case "crypto-key", "ck":
 			s.CryptoKey = *cryptoKey
+		case "crypto-cert", "cc":
+			s.CryptoCert = *cryptoCert
 		case "audit-file", "af":
 			s.AuditFile = *auditFile
 		case "audit-url", "au":

@@ -15,13 +15,9 @@ const realIPKey = "x-real-ip"
 
 // TrustedSubnet пропускает вызов, если IP из метаданных x-real-ip входит в
 // subnet, иначе пишет причину в logger и возвращает codes.PermissionDenied.
-// nil подсеть прозрачна.
+// subnet не может быть nil.
 func TrustedSubnet(subnet *net.IPNet, logger *zap.Logger) grpc.UnaryServerInterceptor {
 	return func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
-		if subnet == nil {
-			return handler(ctx, req)
-		}
-
 		var ipStr string
 		if md, ok := metadata.FromIncomingContext(ctx); ok {
 			if values := md.Get(realIPKey); len(values) > 0 {

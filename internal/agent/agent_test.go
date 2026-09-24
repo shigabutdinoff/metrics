@@ -171,7 +171,7 @@ func TestAgent_Run_GRPC(t *testing.T) {
 	a := &Agent{
 		Storage:        storage.NewMemStorage(),
 		Client:         resty.NewWithClient(ts.Client()),
-		Config:         config.Config{Address: config.Address(ts.URL), GRPCAddress: startGRPC(t, f), Key: "k"},
+		Config:         config.Config{Address: config.Address(ts.URL), GRPCAddress: startGRPC(t, f), Key: "k", CryptoKey: testCert},
 		PollInterval:   20 * time.Millisecond,
 		ReportInterval: 50 * time.Millisecond,
 		Logger:         zap.New(core),
@@ -194,7 +194,7 @@ func TestAgent_Run_GRPC(t *testing.T) {
 	if n := httpRequests.Load(); n != 0 {
 		t.Fatalf("запросов по HTTP = %d, ожидается 0", n)
 	}
-	if n := logs.FilterMessageSnippet("Подпись и шифрование по gRPC не применяются").Len(); n != 1 {
+	if n := logs.FilterMessageSnippet("Подпись по gRPC не применяется").Len(); n != 1 {
 		t.Fatalf("предупреждений о подписи = %d, ожидается 1", n)
 	}
 }
@@ -546,6 +546,18 @@ func TestAgent_Run_BadCryptoKey(t *testing.T) {
 
 	if err := a.Run(t.Context()); err == nil {
 		t.Fatal("ожидалась ошибка загрузки публичного ключа")
+	}
+}
+
+func TestAgent_Run_GRPCWithoutCert(t *testing.T) {
+	a := &Agent{
+		Storage: storage.NewMemStorage(),
+		Config:  config.Config{GRPCAddress: "127.0.0.1:3200"},
+		Logger:  zap.NewNop(),
+	}
+
+	if err := a.Run(t.Context()); err == nil || !strings.Contains(err.Error(), "флаг -crypto-key") {
+		t.Fatalf("Run() ошибка = %v, ожидается ошибка клиента gRPC", err)
 	}
 }
 

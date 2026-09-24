@@ -3,12 +3,13 @@ package agent
 import (
 	"cmp"
 	"context"
+	"errors"
 	"net"
 	"net/url"
 	"strings"
 
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/resolver"
 
@@ -27,9 +28,16 @@ const grpcRetryPolicy = `{"methodConfig": [{
 	}
 }]}`
 
-func newGRPCConn(addr string) (*grpc.ClientConn, error) {
+func newGRPCConn(addr, certFile string) (*grpc.ClientConn, error) {
+	if certFile == "" {
+		return nil, errors.New("нужен сертификат TLS, флаг -crypto-key или CRYPTO_KEY")
+	}
+	creds, err := credentials.NewClientTLSFromFile(certFile, "")
+	if err != nil {
+		return nil, err
+	}
 	return grpc.NewClient(addr,
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithTransportCredentials(creds),
 		grpc.WithDefaultServiceConfig(grpcRetryPolicy),
 	)
 }

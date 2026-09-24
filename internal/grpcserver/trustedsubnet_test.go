@@ -29,7 +29,6 @@ func TestTrustedSubnet(t *testing.T) {
 		wantLog   string
 		wantLogIP string
 	}{
-		{name: "nil подсеть без проверки", want: codes.OK},
 		{name: "IP в подсети проходит", subnet: subnet, md: metadata.Pairs("x-real-ip", "192.168.0.69"), want: codes.OK},
 		{name: "IP вне подсети", subnet: subnet, md: metadata.Pairs("x-real-ip", "10.0.0.1"), want: codes.PermissionDenied, wantLog: outside, wantLogIP: "10.0.0.1"},
 		{name: "нет метаданных", subnet: subnet, want: codes.PermissionDenied, wantLog: unknown},
