@@ -28,6 +28,7 @@ var (
 	key               = flag.String("key", "", "Секретный ключ для подписи")
 	cryptoKey         = flag.String("crypto-key", "", "Путь к файлу с публичным ключом")
 	rateLimit         = flag.Int64("rate-limit", int64(config.DefaultRateLimit), "Число одновременных запросов к серверу")
+	grpcAddress       = flag.String("grpc-address", "", "Адрес сервера gRPC, пусто шлёт по HTTP")
 	configFile        = flag.String("config", "", "Путь к JSON-файлу конфигурации")
 )
 
@@ -42,7 +43,9 @@ func init() {
 	flag.Int64Var(reportIntervalSec, "r", int64(config.DefaultReportInterval), "Период отправки метрик в секундах (shorthand)")
 	flag.Int64Var(pollIntervalSec, "p", int64(config.DefaultPollInterval), "Период снятия метрик в секундах (shorthand)")
 	flag.StringVar(key, "k", "", "Секретный ключ для подписи (shorthand)")
+	flag.StringVar(cryptoKey, "ck", "", "Путь к файлу с публичным ключом (shorthand)")
 	flag.Int64Var(rateLimit, "l", int64(config.DefaultRateLimit), "Число одновременных запросов к серверу (shorthand)")
+	flag.StringVar(grpcAddress, "ga", "", "Адрес сервера gRPC, пусто шлёт по HTTP (shorthand)")
 	flag.StringVar(configFile, "c", "", "Путь к JSON-файлу конфигурации (shorthand)")
 }
 
@@ -84,10 +87,12 @@ func main() {
 			a.PollInterval = time.Duration(*pollIntervalSec) * time.Second
 		case "key", "k":
 			a.Key = *key
-		case "crypto-key":
+		case "crypto-key", "ck":
 			a.CryptoKey = *cryptoKey
 		case "rate-limit", "l":
 			a.RateLimitInt64 = config.RateLimit(*rateLimit)
+		case "grpc-address", "ga":
+			a.GRPCAddress = *grpcAddress
 		}
 	})
 

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -18,6 +19,7 @@ import (
 	_ "github.com/golang-migrate/migrate/v4/source/file"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
+	"google.golang.org/grpc"
 
 	"github.com/shigabutdinoff/metrics/internal/audit"
 	"github.com/shigabutdinoff/metrics/internal/handlers/middleware/auditmw"
@@ -26,6 +28,7 @@ import (
 	"github.com/shigabutdinoff/metrics/internal/handlers/middleware/hash"
 	"github.com/shigabutdinoff/metrics/internal/handlers/middleware/logging"
 	"github.com/shigabutdinoff/metrics/internal/handlers/middleware/reqbody"
+	"github.com/shigabutdinoff/metrics/internal/handlers/middleware/trustedsubnet"
 	"github.com/shigabutdinoff/metrics/internal/handlers/route/healthcheck"
 	"github.com/shigabutdinoff/metrics/internal/handlers/route/metrics"
 	"github.com/shigabutdinoff/metrics/internal/handlers/route/update"
@@ -55,12 +58,18 @@ const (
 	DefaultKey = ""
 	// DefaultCryptoKey расшифровка запросов выключена.
 	DefaultCryptoKey = ""
+	// DefaultCryptoCert сертификат не задан, gRPC без него не запускается.
+	DefaultCryptoCert = ""
 	// DefaultAuditFile аудит в файл выключен.
 	DefaultAuditFile = ""
 	// DefaultAuditURL аудит по HTTP выключен.
 	DefaultAuditURL = ""
 	// DefaultPprofAddress сервер pprof выключен.
 	DefaultPprofAddress = ""
+	// DefaultTrustedSubnet проверка подсети агентов выключена.
+	DefaultTrustedSubnet = ""
+	// DefaultGRPCAddress сервер gRPC выключен.
+	DefaultGRPCAddress = ""
 )
 
 const defaultShutdownTimeout = 10 * time.Second
@@ -87,16 +96,24 @@ type Server struct {
 	Key string `env:"KEY" json:"key"`
 	// CryptoKey путь к файлу с приватным ключом RSA, флаг -crypto-key.
 	CryptoKey string `env:"CRYPTO_KEY" json:"crypto_key"`
+	// CryptoCert путь к сертификату TLS для gRPC, флаг -crypto-cert.
+	// Обязателен вместе с CryptoKey, если задан GRPCAddress.
+	CryptoCert string `env:"CRYPTO_CERT" json:"crypto_cert"`
 	// AuditFile путь к файлу аудита, флаг -audit-file.
 	AuditFile string `env:"AUDIT_FILE" json:"audit_file"`
 	// AuditURL адрес приёмника аудита, флаг -audit-url.
 	AuditURL string `env:"AUDIT_URL" json:"audit_url"`
 	// PprofAddress адрес отдельного сервера pprof, флаг -pprof-address.
-	PprofAddress    string `env:"PPROF_ADDRESS" json:"pprof_address"`
+	PprofAddress string `env:"PPROF_ADDRESS" json:"pprof_address"`
+	// GRPCAddress адрес сервера gRPC, флаг -grpc-address, пустой отключает.
+	GRPCAddress string `env:"GRPC_ADDRESS" json:"grpc_address"`
+	// TrustedSubnet доверенная подсеть агентов в CIDR, флаг -t.
+	TrustedSubnet   string `env:"TRUSTED_SUBNET" json:"trusted_subnet"`
 	auditor         *audit.Publisher
 	auditClosers    []io.Closer
 	onChange        func()
 	privateKey      *rsa.PrivateKey
+	trustedNet      *net.IPNet
 	shutdownTimeout time.Duration
 	// Database соединение с PostgreSQL, открывается при непустом DatabaseDSN.
 	Database *sql.DB `json:"-"`
@@ -114,9 +131,12 @@ func New(st storage.Storage, logger *zap.Logger) *Server {
 		DatabaseDSN:     DefaultDatabaseDSN,
 		Key:             DefaultKey,
 		CryptoKey:       DefaultCryptoKey,
+		CryptoCert:      DefaultCryptoCert,
 		AuditFile:       DefaultAuditFile,
 		AuditURL:        DefaultAuditURL,
 		PprofAddress:    DefaultPprofAddress,
+		TrustedSubnet:   DefaultTrustedSubnet,
+		GRPCAddress:     DefaultGRPCAddress,
 		shutdownTimeout: defaultShutdownTimeout,
 	}
 
@@ -126,6 +146,18 @@ func New(st storage.Storage, logger *zap.Logger) *Server {
 func (s *Server) setupRoutes() {
 	r := chi.NewRouter()
 	r.Use(logging.WithLogging(s.Logger))
+	if s.trustedNet != nil {
+		r.Use(func(next http.Handler) http.Handler {
+			checked := trustedsubnet.Middleware(s.trustedNet, s.Logger)(next)
+			return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+				if req.Method == http.MethodPost && strings.HasPrefix(req.URL.Path, "/update") {
+					checked.ServeHTTP(w, req)
+					return
+				}
+				next.ServeHTTP(w, req)
+			})
+		})
+	}
 	r.Use(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 			next.ServeHTTP(w, req)
@@ -152,7 +184,7 @@ func (s *Server) setupRoutes() {
 		r.Use(middleware.RequestSize(reqbody.MaxBodySize))
 		r.Use(hash.Middleware(s.Key, s.Logger))
 		r.With(s.audit(auditmw.FromBody)).Post("/update/", update.StoreApplicationJSON(s.Storage))
-		r.With(s.audit(auditmw.FromBody)).Post("/updates/", updatesRoute.StoreApplicationJSONBatch(s.Storage, s.Logger))
+		r.Post("/updates/", updatesRoute.StoreApplicationJSONBatch(s.Storage, s.notifier(), s.Logger))
 		r.Post("/value/", value.ShowApplicationJSON(s.Storage))
 	})
 	r.Get("/ping", healthcheck.Ping(func() *sql.DB {
@@ -169,6 +201,14 @@ func (s *Server) Run(ctx context.Context) error {
 			return fmt.Errorf("загрузка приватного ключа: %w", err)
 		}
 		s.privateKey = key
+	}
+
+	if s.TrustedSubnet != "" {
+		_, subnet, err := net.ParseCIDR(s.TrustedSubnet)
+		if err != nil {
+			return fmt.Errorf("доверенная подсеть: %w", err)
+		}
+		s.trustedNet = subnet
 	}
 
 	defer s.closeAudit()
@@ -213,6 +253,18 @@ func (s *Server) Run(ctx context.Context) error {
 func (s *Server) serve(ctx context.Context, ps *persistent.Service) error {
 	srv := &http.Server{Addr: s.Address, Handler: s.Router}
 
+	var lis net.Listener
+	var gs *grpc.Server
+	if s.GRPCAddress != "" {
+		var err error
+		if gs, err = s.grpcServer(); err != nil {
+			return fmt.Errorf("TLS gRPC: %w", err)
+		}
+		if lis, err = net.Listen("tcp", s.GRPCAddress); err != nil {
+			return fmt.Errorf("прослушивание gRPC: %w", err)
+		}
+	}
+
 	g, gctx := errgroup.WithContext(ctx)
 	g.Go(func() error {
 		if err := srv.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
@@ -230,6 +282,19 @@ func (s *Server) serve(ctx context.Context, ps *persistent.Service) error {
 		}
 		return nil
 	})
+	if gs != nil {
+		g.Go(func() error {
+			if err := gs.Serve(lis); !errors.Is(err, grpc.ErrServerStopped) {
+				return err
+			}
+			return nil
+		})
+		g.Go(func() error {
+			<-gctx.Done()
+			s.stopGRPC(gs)
+			return nil
+		})
+	}
 	if s.StoreInterval > 0 {
 		g.Go(func() error {
 			s.saveLoop(gctx, ps)

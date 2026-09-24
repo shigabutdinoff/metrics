@@ -13,7 +13,9 @@ import (
 	"fmt"
 	"io"
 	"math/rand"
+	"net"
 	"net/http"
+	"net/url"
 	"runtime"
 	"sync"
 	"time"
@@ -24,6 +26,7 @@ import (
 
 	"github.com/shigabutdinoff/metrics/internal/config/agent"
 	"github.com/shigabutdinoff/metrics/internal/model/metrics"
+	pb "github.com/shigabutdinoff/metrics/internal/proto"
 	"github.com/shigabutdinoff/metrics/internal/repository"
 	"github.com/shigabutdinoff/metrics/internal/storage"
 	"github.com/shigabutdinoff/metrics/pkg/rsacrypt"
@@ -43,12 +46,17 @@ type Agent struct {
 	Logger *zap.Logger
 	// PublicKey ключ шифрования тела запросов, Run читает его из Config.CryptoKey.
 	PublicKey       *rsa.PublicKey
+	grpcClient      pb.MetricsClient
 	shutdownTimeout time.Duration
+	sendTimeout     time.Duration
 	// Config конфигурация агента: адрес сервера, интервалы, ключ подписи.
 	agent.Config
 }
 
-const defaultShutdownTimeout = 10 * time.Second
+const (
+	defaultShutdownTimeout = 10 * time.Second
+	defaultSendTimeout     = 10 * time.Second
+)
 
 var gzipWriters = sync.Pool{New: func() any { return gzip.NewWriter(io.Discard) }}
 
@@ -103,6 +111,20 @@ func (a *Agent) Run(ctx context.Context) error {
 		a.PublicKey = pub
 	}
 
+	send := a.sendMetrics
+	if a.GRPCAddress != "" {
+		conn, err := newGRPCConn(a.GRPCAddress, a.CryptoKey)
+		if err != nil {
+			return fmt.Errorf("клиент gRPC: %w", err)
+		}
+		defer conn.Close()
+		a.grpcClient = pb.NewMetricsClient(conn)
+		send = a.sendMetricsGRPC
+		if a.Config.Key != "" {
+			a.Logger.Warn("Подпись по gRPC не применяется")
+		}
+	}
+
 	workers := a.workerCount()
 	jobs := make(chan []metrics.Metrics, workers)
 
@@ -123,7 +145,7 @@ func (a *Agent) Run(ctx context.Context) error {
 	for i := 0; i < workers; i++ {
 		g.Go(func() error {
 			for batch := range jobs {
-				if err := a.sendMetrics(sendCtx, batch); err != nil {
+				if err := send(sendCtx, batch); err != nil {
 					a.Logger.Warn("Ошибка отправки метрик", zap.Error(err))
 				}
 			}
@@ -269,6 +291,9 @@ func (a *Agent) sendMetrics(ctx context.Context, items []metrics.Metrics) error 
 	if hashHeader != "" {
 		req.SetHeader("HashSHA256", hashHeader)
 	}
+	if ip := a.realIP(ctx); ip != "" {
+		req.SetHeader("X-Real-IP", ip)
+	}
 
 	resp, err := req.Post(path)
 	if err != nil {
@@ -279,4 +304,41 @@ func (a *Agent) sendMetrics(ctx context.Context, items []metrics.Metrics) error 
 		return fmt.Errorf("ошибка получения статуса %d", resp.StatusCode())
 	}
 	return nil
+}
+
+func (a *Agent) realIP(ctx context.Context) string {
+	ip, err := a.hostIP(ctx)
+	if err != nil {
+		a.Logger.Warn("IP хоста не определён, X-Real-IP не отправляется", zap.Error(err))
+		return ""
+	}
+	return ip.String()
+}
+
+func (a *Agent) hostIP(ctx context.Context) (net.IP, error) {
+	host, err := a.dialTarget()
+	if err != nil {
+		return nil, err
+	}
+	var d net.Dialer
+	conn, err := d.DialContext(ctx, "udp4", host)
+	if err != nil {
+		conn, err = d.DialContext(ctx, "udp", host)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close()
+	return conn.LocalAddr().(*net.UDPAddr).IP, nil
+}
+
+func (a *Agent) dialTarget() (string, error) {
+	if a.GRPCAddress != "" {
+		return grpcHostPort(a.GRPCAddress), nil
+	}
+	u, err := url.Parse(string(a.Address))
+	if err != nil {
+		return "", err
+	}
+	return net.JoinHostPort(u.Hostname(), cmp.Or(u.Port(), "80")), nil
 }

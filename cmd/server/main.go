@@ -21,15 +21,18 @@ import (
 
 var (
 	address         = flag.String("address", server.DefaultAddress, "Адрес, на котором сервер слушает HTTP")
-	storeInterval   = flag.Int("i", server.DefaultStoreInterval, "Интервал времени в секундах")
-	fileStoragePath = flag.String("f", server.DefaultFileStoragePath, "Путь до файла")
-	restore         = flag.Bool("r", server.DefaultRestore, "Загружать ранее сохранённые значения")
-	databaseDsn     = flag.String("d", server.DefaultDatabaseDSN, "Адрес подключения к БД")
-	key             = flag.String("k", server.DefaultKey, "Секретный ключ для подписи")
+	storeInterval   = flag.Int("store-interval", server.DefaultStoreInterval, "Интервал времени в секундах")
+	fileStoragePath = flag.String("file-storage-path", server.DefaultFileStoragePath, "Путь до файла")
+	restore         = flag.Bool("restore", server.DefaultRestore, "Загружать ранее сохранённые значения")
+	databaseDsn     = flag.String("database-dsn", server.DefaultDatabaseDSN, "Адрес подключения к БД")
+	key             = flag.String("key", server.DefaultKey, "Секретный ключ для подписи")
 	cryptoKey       = flag.String("crypto-key", server.DefaultCryptoKey, "Путь к файлу с приватным ключом")
+	cryptoCert      = flag.String("crypto-cert", server.DefaultCryptoCert, "Путь к сертификату TLS для gRPC")
 	auditFile       = flag.String("audit-file", server.DefaultAuditFile, "Путь к файлу логов аудита")
 	auditURL        = flag.String("audit-url", server.DefaultAuditURL, "URL приёмника логов аудита")
 	pprofAddress    = flag.String("pprof-address", server.DefaultPprofAddress, "Адрес pprof, пусто выключает")
+	trustedSubnet   = flag.String("trusted-subnet", server.DefaultTrustedSubnet, "Доверенная подсеть агентов в CIDR")
+	grpcAddress     = flag.String("grpc-address", server.DefaultGRPCAddress, "Адрес gRPC, пусто выключает")
 	configFile      = flag.String("config", "", "Путь к JSON-файлу конфигурации")
 )
 
@@ -41,11 +44,18 @@ var (
 
 func init() {
 	flag.StringVar(address, "a", server.DefaultAddress, "Адрес, на котором сервер слушает HTTP (shorthand)")
-	flag.IntVar(storeInterval, "store-interval", server.DefaultStoreInterval, "Интервал времени в секундах")
-	flag.StringVar(fileStoragePath, "file-storage-path", server.DefaultFileStoragePath, "Путь до файла")
-	flag.BoolVar(restore, "restore", server.DefaultRestore, "Загружать ранее сохранённые значения")
-	flag.StringVar(databaseDsn, "database-dsn", server.DefaultDatabaseDSN, "Адрес подключения к БД")
-	flag.StringVar(key, "key", server.DefaultKey, "Секретный ключ для подписи")
+	flag.IntVar(storeInterval, "i", server.DefaultStoreInterval, "Интервал времени в секундах (shorthand)")
+	flag.StringVar(fileStoragePath, "f", server.DefaultFileStoragePath, "Путь до файла (shorthand)")
+	flag.BoolVar(restore, "r", server.DefaultRestore, "Загружать ранее сохранённые значения (shorthand)")
+	flag.StringVar(databaseDsn, "d", server.DefaultDatabaseDSN, "Адрес подключения к БД (shorthand)")
+	flag.StringVar(key, "k", server.DefaultKey, "Секретный ключ для подписи (shorthand)")
+	flag.StringVar(cryptoKey, "ck", server.DefaultCryptoKey, "Путь к файлу с приватным ключом (shorthand)")
+	flag.StringVar(cryptoCert, "cc", server.DefaultCryptoCert, "Путь к сертификату TLS для gRPC (shorthand)")
+	flag.StringVar(auditFile, "af", server.DefaultAuditFile, "Путь к файлу логов аудита (shorthand)")
+	flag.StringVar(auditURL, "au", server.DefaultAuditURL, "URL приёмника логов аудита (shorthand)")
+	flag.StringVar(pprofAddress, "pa", server.DefaultPprofAddress, "Адрес pprof, пусто выключает (shorthand)")
+	flag.StringVar(trustedSubnet, "t", server.DefaultTrustedSubnet, "Доверенная подсеть агентов в CIDR (shorthand)")
+	flag.StringVar(grpcAddress, "ga", server.DefaultGRPCAddress, "Адрес gRPC, пусто выключает (shorthand)")
 	flag.StringVar(configFile, "c", "", "Путь к JSON-файлу конфигурации (shorthand)")
 }
 
@@ -89,14 +99,20 @@ func run() error {
 			s.DatabaseDSN = *databaseDsn
 		case "key", "k":
 			s.Key = *key
-		case "crypto-key":
+		case "crypto-key", "ck":
 			s.CryptoKey = *cryptoKey
-		case "audit-file":
+		case "crypto-cert", "cc":
+			s.CryptoCert = *cryptoCert
+		case "audit-file", "af":
 			s.AuditFile = *auditFile
-		case "audit-url":
+		case "audit-url", "au":
 			s.AuditURL = *auditURL
-		case "pprof-address":
+		case "pprof-address", "pa":
 			s.PprofAddress = *pprofAddress
+		case "trusted-subnet", "t":
+			s.TrustedSubnet = *trustedSubnet
+		case "grpc-address", "ga":
+			s.GRPCAddress = *grpcAddress
 		}
 	})
 

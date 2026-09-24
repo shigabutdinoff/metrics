@@ -64,6 +64,17 @@ func TestStoreApplicationJSONBatch(t *testing.T) {
 		{name: "битый JSON", body: `{`, wantStatus: http.StatusBadRequest},
 		{name: "пустое название", body: `[{"id":" ","type":"gauge","value":1}]`, wantStatus: http.StatusNotFound},
 		{name: "неизвестный тип", body: `[{"id":"x","type":"histogram","value":1}]`, wantStatus: http.StatusBadRequest},
+		{
+			name:       "частичная пачка ничего не пишет",
+			body:       `[{"id":"alloc","type":"gauge","value":1},{"id":"x","type":"histogram","value":1}]`,
+			wantStatus: http.StatusBadRequest,
+			assert: func(t *testing.T, st *storage.MemStorage, _ *httptest.ResponseRecorder) {
+				t.Helper()
+				if g := st.GetGauges(context.Background()); len(g) != 0 {
+					t.Fatalf("gauges = %v, ожидается пусто", g)
+				}
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -73,7 +84,7 @@ func TestStoreApplicationJSONBatch(t *testing.T) {
 			req.Header.Set("Content-Type", "application/json")
 			rr := httptest.NewRecorder()
 
-			StoreApplicationJSONBatch(st, zap.NewNop()).ServeHTTP(rr, req)
+			StoreApplicationJSONBatch(st, nil, zap.NewNop()).ServeHTTP(rr, req)
 
 			if rr.Code != tt.wantStatus {
 				t.Fatalf("статус = %d, ожидается %d", rr.Code, tt.wantStatus)
@@ -90,7 +101,7 @@ func BenchmarkStoreApplicationJSONBatch(b *testing.B) {
 	if err != nil {
 		b.Fatalf("json.Marshal() ошибка = %v", err)
 	}
-	h := StoreApplicationJSONBatch(storage.NewMemStorage(), zap.NewNop())
+	h := StoreApplicationJSONBatch(storage.NewMemStorage(), nil, zap.NewNop())
 	rd := bytes.NewReader(body)
 	req := httptest.NewRequest(http.MethodPost, "/updates/", rd)
 	req.Header.Set("Content-Type", "application/json")
@@ -114,16 +125,27 @@ func (brokenWriter) Write([]byte) (int, error) {
 	return 0, errors.New("соединение закрыто")
 }
 
-func TestStoreApplicationJSONBatchRecordsAuditOnWriteError(t *testing.T) {
-	var recorded audit.Names
-	ctx := audit.WithRecord(context.Background(), &recorded)
-	req := httptest.NewRequest(http.MethodPost, "/updates/",
-		strings.NewReader(`[{"id":"Alloc","type":"gauge","value":1}]`)).WithContext(ctx)
+type fakeNotifier struct {
+	events []audit.Event
+}
 
-	h := StoreApplicationJSONBatch(storage.NewMemStorage(), zap.NewNop())
+func (f *fakeNotifier) Publish(e audit.Event) {
+	f.events = append(f.events, e)
+}
+
+func TestStoreApplicationJSONBatchPublishesAuditOnWriteError(t *testing.T) {
+	n := &fakeNotifier{}
+	req := httptest.NewRequest(http.MethodPost, "/updates/",
+		strings.NewReader(`[{"id":"Alloc","type":"gauge","value":1}]`))
+	req.RemoteAddr = "10.0.0.5:34567"
+
+	h := StoreApplicationJSONBatch(storage.NewMemStorage(), n, zap.NewNop())
 	h(brokenWriter{httptest.NewRecorder()}, req)
 
-	if got := recorded.Collected(); len(got) != 1 || got[0] != "Alloc" {
-		t.Fatalf("имена для аудита = %v, ожидается [Alloc]", got)
+	if len(n.events) != 1 || len(n.events[0].Metrics) != 1 || n.events[0].Metrics[0] != "Alloc" {
+		t.Fatalf("события аудита = %v, ожидается одно с [Alloc]", n.events)
+	}
+	if n.events[0].IPAddress != "10.0.0.5" {
+		t.Fatalf("ip_address = %q, ожидается 10.0.0.5", n.events[0].IPAddress)
 	}
 }

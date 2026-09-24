@@ -20,7 +20,6 @@ import (
 	"github.com/shigabutdinoff/metrics/internal/handlers/middleware/compress"
 	"github.com/shigabutdinoff/metrics/internal/handlers/middleware/hash"
 	"github.com/shigabutdinoff/metrics/internal/handlers/route/update"
-	"github.com/shigabutdinoff/metrics/internal/handlers/route/updates"
 	"github.com/shigabutdinoff/metrics/internal/handlers/route/value"
 	"github.com/shigabutdinoff/metrics/internal/storage"
 )
@@ -60,7 +59,6 @@ func newRouter(n audit.Notifier) chi.Router {
 		r.With(auditmw.FromPath(n, log)).Post("/update/{type}/{name}/{value}", update.StoreTextPlain(st))
 		r.Get("/value/{type}/{name}", value.ShowTextPlain(st))
 		r.With(auditmw.FromBody(n, log)).Post("/update/", update.StoreApplicationJSON(st))
-		r.With(auditmw.FromBody(n, log)).Post("/updates/", updates.StoreApplicationJSONBatch(st, log))
 	})
 	return r
 }
@@ -101,16 +99,6 @@ func TestMiddleware(t *testing.T) {
 			wantStatus:  http.StatusOK,
 			wantEvents:  1,
 			wantMetrics: []string{"Frees"},
-		},
-		{
-			name:        "JSON: батч из трёх метрик",
-			method:      http.MethodPost,
-			path:        "/updates/",
-			body:        `[{"id":"Alloc","type":"gauge","value":1},{"id":"Frees","type":"counter","delta":2},{"id":"Sys","type":"gauge","value":3}]`,
-			contentType: "application/json",
-			wantStatus:  http.StatusOK,
-			wantEvents:  1,
-			wantMetrics: []string{"Alloc", "Frees", "Sys"},
 		},
 		{
 			name:        "битый JSON не порождает событие",
@@ -187,7 +175,7 @@ func TestMiddlewareReadsGzippedBody(t *testing.T) {
 	n := &fakeNotifier{}
 	r := newRouter(n)
 
-	payload := `[{"id":"Alloc","type":"gauge","value":1},{"id":"Frees","type":"counter","delta":2}]`
+	payload := `{"id":"Alloc","type":"gauge","value":1}`
 
 	var buf bytes.Buffer
 	zw := gzip.NewWriter(&buf)
@@ -198,7 +186,7 @@ func TestMiddlewareReadsGzippedBody(t *testing.T) {
 		t.Fatalf("не удалось закрыть gzip-писатель: %v", err)
 	}
 
-	req := httptest.NewRequest(http.MethodPost, "/updates/", bytes.NewReader(buf.Bytes()))
+	req := httptest.NewRequest(http.MethodPost, "/update/", bytes.NewReader(buf.Bytes()))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Content-Encoding", "gzip")
 	req.RemoteAddr = remoteAddr
@@ -214,7 +202,7 @@ func TestMiddlewareReadsGzippedBody(t *testing.T) {
 	if len(events) != 1 {
 		t.Fatalf("опубликовано %d событий, ожидается 1", len(events))
 	}
-	assertMetrics(t, events[0].Metrics, []string{"Alloc", "Frees"})
+	assertMetrics(t, events[0].Metrics, []string{"Alloc"})
 }
 
 func TestMiddlewareKeepsBodyIntactForHandler(t *testing.T) {

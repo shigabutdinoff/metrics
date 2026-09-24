@@ -2,7 +2,6 @@ package auditmw
 
 import (
 	"errors"
-	"net"
 	"net/http"
 	"net/url"
 	"time"
@@ -12,6 +11,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/shigabutdinoff/metrics/internal/audit"
+	"github.com/shigabutdinoff/metrics/pkg/hostaddr"
 )
 
 type extractor func(r *http.Request, recorded []string) ([]string, error)
@@ -50,7 +50,7 @@ func wrap(n audit.Notifier, log *zap.Logger, record bool, ex extractor) func(htt
 			n.Publish(audit.Event{
 				TS:        time.Now().Unix(),
 				Metrics:   names,
-				IPAddress: clientIP(r),
+				IPAddress: hostaddr.Host(r.RemoteAddr),
 			})
 		})
 	}
@@ -69,12 +69,4 @@ func namesFromPath(r *http.Request, _ []string) ([]string, error) {
 		return nil, err
 	}
 	return []string{name}, nil
-}
-
-func clientIP(r *http.Request) string {
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return r.RemoteAddr
-	}
-	return host
 }
